@@ -1,0 +1,16 @@
+[Unit]
+Description=Onefinity CNC Controller - Native Deployment
+Documentation=https://github.com/your-repo/onefinity
+After=network-online.target
+Wants=network-online.target
+
+# This is a target unit that groups all native services together
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+
+[Install]
+WantedBy=multi-user.target
+Requires=redis-onefinity.service onefinity-backend.service onefinity-frontend.service

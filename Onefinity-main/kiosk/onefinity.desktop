@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Onefinity CNC Kiosk
+Comment=Start Onefinity CNC Controller in kiosk mode
+Exec=/opt/onefinity/kiosk/kiosk-start.sh
+Terminal=false
+Hidden=false
+X-GNOME-Autostart-enabled=true
+X-GNOME-Autostart-Delay=5

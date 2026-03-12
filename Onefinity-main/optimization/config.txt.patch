@@ -1,0 +1,42 @@
+# Raspberry Pi Boot Configuration Optimizations
+# Add these lines to /boot/config.txt for better performance
+
+# GPU Memory (256MB for desktop, 128MB for headless)
+gpu_mem=256
+
+# Enable hardware video acceleration
+dtoverlay=vc4-kms-v3d
+max_framebuffers=2
+
+# HDMI settings (for touchscreen/monitor)
+hdmi_force_hotplug=1
+hdmi_drive=2
+
+# Disable Bluetooth to save resources (comment out if needed)
+dtoverlay=disable-bt
+
+# Disable Wi-Fi to save resources (comment out if needed)
+# dtoverlay=disable-wifi
+
+# Enable UART for debugging
+enable_uart=1
+
+# CPU Governor (performance mode)
+# Uncomment for maximum performance (increases power consumption)
+# arm_freq=2000
+# over_voltage=2
+
+# Overclocking settings for Raspberry Pi 5 (use with caution!)
+# arm_freq=2400
+# gpu_freq=800
+# over_voltage=6
+
+# Disable audio (saves resources if not needed)
+# dtparam=audio=off
+
+# Disable camera (saves resources if not needed)
+# camera_auto_detect=0
+
+# Boot options
+# boot_delay=0  # Faster boot
+# disable_splash=1  # No splash screen

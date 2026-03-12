@@ -1,0 +1,266 @@
+# Onefinity CNC Controller - Raspberry Pi OS Image Configuration
+# For use with rpi-image-gen tool
+
+name: "onefinity-cnc"
+version: "1.0.0"
+description: "Onefinity CNC Controller with auto-start kiosk mode"
+
+# Base image configuration
+base:
+  distribution: "debian"
+  release: "bookworm"
+  architecture: "arm64"
+  variant: "desktop"
+
+# System configuration
+system:
+  hostname: "onefinity-cnc"
+  timezone: "UTC"
+  locale: "en_US.UTF-8"
+  keyboard: "us"
+  
+  # Default user (will be prompted to change password on first boot)
+  users:
+    - name: "cnc"
+      password: "$6$rounds=4096$saltsalt$hashed_password_here"  # Change in first-boot
+      groups:
+        - "sudo"
+        - "dialout"
+        - "video"
+        - "audio"
+        - "plugdev"
+        - "users"
+      shell: "/bin/bash"
+      home: "/home/cnc"
+
+# Network configuration
+network:
+  enable_ssh: true
+  enable_avahi: true  # For mDNS (onefinity-cnc.local)
+  hostname: "onefinity-cnc"
+  
+  # Firewall rules (using ufw)
+  firewall:
+    enabled: true
+    default_policy: "deny"
+    rules:
+      - { port: 22, proto: "tcp", policy: "allow", comment: "SSH" }
+      - { port: 80, proto: "tcp", policy: "allow", comment: "HTTP" }
+      - { port: 443, proto: "tcp", policy: "allow", comment: "HTTPS" }
+      - { port: 6070, proto: "tcp", policy: "allow", comment: "Backend API" }
+      - { port: 6080, proto: "tcp", policy: "allow", comment: "Frontend" }
+
+# Package management
+packages:
+  # Update package lists and upgrade existing packages
+  update: true
+  upgrade: true
+  
+  # Install from package list file
+  install_from_file: "packages.list"
+  
+  # Additional packages to install
+  install:
+    # System utilities
+    - "vim"
+    - "nano"
+    - "curl"
+    - "wget"
+    - "git"
+    - "htop"
+    - "tmux"
+    - "screen"
+    - "unzip"
+    - "zip"
+    
+    # Network utilities
+    - "net-tools"
+    - "iputils-ping"
+    - "dnsutils"
+    - "avahi-daemon"
+    - "avahi-utils"
+    
+    # Security
+    - "ufw"
+    - "fail2ban"
+    - "unattended-upgrades"
+    
+    # Development tools
+    - "build-essential"
+    - "python3"
+    - "python3-pip"
+    - "python3-dev"
+    
+    # Node.js and npm (for native deployment)
+    - "nodejs"
+    - "npm"
+    
+    # Redis (for native deployment)
+    - "redis-server"
+    - "redis-tools"
+    
+    # Nginx (for native deployment)
+    - "nginx"
+    
+    # Docker and Docker Compose
+    - "docker.io"
+    - "docker-compose"
+    
+    # Display and kiosk mode
+    - "chromium-browser"
+    - "xdotool"
+    - "unclutter"
+    - "xserver-xorg"
+    - "lightdm"
+    - "xinit"
+    - "x11-xserver-utils"
+    
+    # Touch screen support
+    - "libinput-tools"
+    - "xinput"
+    - "xinput-calibrator"
+    
+    # Serial port utilities
+    - "minicom"
+    - "screen"
+    - "setserial"
+    
+    # Monitoring tools
+    - "sysstat"
+    - "lm-sensors"
+
+# Boot configuration (/boot/config.txt)
+boot_config:
+  # GPU memory allocation (256MB for desktop)
+  gpu_mem: 256
+  
+  # Enable hardware acceleration
+  dtoverlay: "vc4-kms-v3d"
+  
+  # HDMI settings (for touchscreen)
+  hdmi_force_hotplug: 1
+  hdmi_drive: 2
+  
+  # Performance settings for Raspberry Pi 5
+  arm_64bit: 1
+  
+  # Enable UART for debugging (optional)
+  enable_uart: 1
+  
+  # Disable Bluetooth (to free resources, can be re-enabled)
+  dtoverlay_disable: "disable-bt"
+
+# Systemd services
+services:
+  enable:
+    - "ssh"
+    - "avahi-daemon"
+    - "redis-server"
+    - "nginx"
+    - "docker"
+    - "ufw"
+    - "unattended-upgrades"
+  
+  disable:
+    # Disable unnecessary services to save resources
+    - "bluetooth"
+    - "cups"
+    - "cups-browsed"
+    - "ModemManager"
+    - "triggerhappy"
+
+# File overlays (copy files into the image)
+overlays:
+  # Systemd service files
+  - source: "../systemd"
+    destination: "/etc/systemd/system"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  
+  # Kiosk configuration
+  - source: "../kiosk"
+    destination: "/opt/onefinity/kiosk"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+  
+  # Hardware configuration (udev rules)
+  - source: "../hardware"
+    destination: "/etc/udev/rules.d"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+  
+  # Installation scripts
+  - source: "../install-scripts"
+    destination: "/opt/onefinity/scripts"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+  
+  # First boot wizard
+  - source: "../first-boot"
+    destination: "/opt/onefinity/first-boot"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+  
+  # Optimization scripts
+  - source: "../optimization"
+    destination: "/opt/onefinity/optimization"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+  
+  # Monitoring scripts
+  - source: "../monitoring"
+    destination: "/opt/onefinity/monitoring"
+    owner: "root"
+    group: "root"
+    mode: "0755"
+  
+  # Application directory structure
+  - source: "../app-template"
+    destination: "/opt/onefinity/app"
+    owner: "cnc"
+    group: "cnc"
+    mode: "0755"
+  
+  # Nginx configuration for native deployment
+  - source: "../nginx/onefinity-native.conf"
+    destination: "/etc/nginx/sites-available/onefinity"
+    owner: "root"
+    group: "root"
+    mode: "0644"
+
+# Custom scripts to run during image build
+scripts:
+  # Run after packages are installed
+  post_install:
+    - "/opt/onefinity/scripts/setup-base.sh"
+  
+  # Run before finalizing the image
+  pre_finalize:
+    - "/opt/onefinity/optimization/disable-services.sh"
+
+# Image output settings
+output:
+  format: "img"
+  compress: "xz"
+  filename: "onefinity-cnc-v1.0.0-rpi5-arm64.img"
+  checksum: true  # Generate SHA256 checksum
+
+# Additional options
+options:
+  # Enable first boot expansion of filesystem
+  expand_filesystem: true
+  
+  # Enable first boot configuration wizard
+  first_boot_script: "/opt/onefinity/first-boot/onefinity-firstboot.service"
+  
+  # Clean up temporary files
+  cleanup: true
+  
+  # Minimize image size
+  minimize: true

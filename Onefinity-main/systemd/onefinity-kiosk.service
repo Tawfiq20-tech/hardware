@@ -1,0 +1,31 @@
+[Unit]
+Description=Onefinity CNC Kiosk Mode
+Documentation=https://github.com/your-repo/onefinity
+After=graphical.target onefinity-docker.service onefinity-native.target
+Wants=graphical.target
+
+[Service]
+Type=simple
+User=cnc
+Group=cnc
+Environment="DISPLAY=:0"
+Environment="XAUTHORITY=/home/cnc/.Xauthority"
+Environment="KIOSK_URL=http://localhost:6080"
+
+# Wait for display and services
+ExecStartPre=/bin/sleep 10
+
+# Start kiosk mode
+ExecStart=/opt/onefinity/kiosk/kiosk-start.sh
+
+# Restart policy
+Restart=always
+RestartSec=10s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=onefinity-kiosk
+
+[Install]
+WantedBy=graphical.target

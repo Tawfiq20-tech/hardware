@@ -1,0 +1,52 @@
+[Unit]
+Description=Onefinity CNC Backend Service
+Documentation=https://github.com/your-repo/onefinity
+After=network-online.target redis-server.service
+Wants=network-online.target
+Requires=redis-server.service
+
+[Service]
+Type=simple
+User=cnc
+Group=cnc
+WorkingDirectory=/opt/onefinity/app/backend
+
+# Environment configuration
+EnvironmentFile=/opt/onefinity/config/.env
+Environment="NODE_ENV=production"
+Environment="PORT=4000"
+Environment="REDIS_URL=redis://localhost:6379"
+
+# Start the backend
+ExecStart=/usr/bin/node index.js
+
+# Restart policy
+Restart=always
+RestartSec=10s
+
+# Resource limits (adjust for Raspberry Pi)
+MemoryLimit=1G
+CPUQuota=150%
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/onefinity/app/backend/logs /opt/onefinity/logs
+
+# Device access for serial ports
+SupplementaryGroups=dialout
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=onefinity-backend
+
+# Graceful shutdown
+TimeoutStopSec=30s
+KillMode=mixed
+KillSignal=SIGTERM
+
+[Install]
+WantedBy=multi-user.target

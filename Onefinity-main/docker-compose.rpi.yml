@@ -1,0 +1,103 @@
+services:
+  # ── Redis (required by Bull job queue) ───────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: onefinity-redis
+    restart: always
+    command: redis-server --appendonly yes
+    ports:
+      - "6060:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - onefinity-network
+
+  # ── Backend (Express + Socket.IO + serialport) ──────────────
+  backend:
+    build: ./backend
+    container_name: onefinity-backend
+    restart: always
+    ports:
+      - "6070:4000"
+    environment:
+      - PORT=4000
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NODE_ENV=production
+    depends_on:
+      redis:
+        condition: service_healthy
+    # Grant access to USB/serial devices on the host for Raspberry Pi
+    privileged: true
+    devices:
+      # Map common serial device paths (adjust as needed)
+      - /dev/ttyUSB0:/dev/ttyUSB0
+      - /dev/ttyUSB1:/dev/ttyUSB1
+      - /dev/ttyACM0:/dev/ttyACM0
+      - /dev/ttyACM1:/dev/ttyACM1
+    volumes:
+      - /dev:/dev
+      - backend-logs:/app/logs
+    networks:
+      - onefinity-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Frontend (React served by nginx) ────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-}
+    container_name: onefinity-frontend
+    restart: always
+    ports:
+      - "6080:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - onefinity-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
+
+  # ── Dozzle – Docker logs viewer (optional) ───────────────────
+  dozzle:
+    image: amir20/dozzle:latest
+    container_name: onefinity-dozzle
+    environment:
+      DOZZLE_BASE: /docker
+      DOZZLE_LEVEL: info
+      DOZZLE_NO_ANALYTICS: "true"
+    ports:
+      - "${DOZZLE_PORT:-6040}:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - onefinity-network
+    restart: always
+    profiles:
+      - tools
+
+volumes:
+  redis-data:
+  backend-logs:
+
+networks:
+  onefinity-network:
+    driver: bridge

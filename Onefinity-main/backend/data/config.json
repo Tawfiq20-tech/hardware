@@ -1,0 +1,76 @@
+{
+  "macros": [],
+  "eventTriggers": {},
+  "toolLibrary": [],
+  "preferences": {
+    "units": "mm",
+    "jogSpeed": 1000,
+    "jogDistance": 1,
+    "safeHeight": 10,
+    "probeThickness": 0,
+    "probeFeedrate": 100,
+    "spindleDelay": 0,
+    "reconnectAutomatically": false,
+    "firmwareFallback": "grblHAL",
+    "baudRate": 115200,
+    "runCheckOnFileLoad": false,
+    "outlineStyle": "Detailed"
+  },
+  "ethernet": {
+    "connectToIP": "192.168.5.1"
+  },
+  "probeSettings": {
+    "touchPlateType": "Standard Block",
+    "blockThickness": 15,
+    "xyThickness": 10,
+    "zProbeDistance": 30,
+    "fastFind": 150,
+    "slowFind": 75,
+    "retraction": 2,
+    "connectionTest": true
+  },
+  "machineProfiles": [
+    {
+      "id": "onefinity-journeyman",
+      "name": "Onefinity Journeyman",
+      "voltage": "24 V",
+      "workArea": "406×305×102 mm (16×12×4 in)",
+      "maxFeed": "3000 mm/min",
+      "spindle": "Router / 1.5 kW",
+      "controller": "GRBL / grblHAL",
+      "notes": "NEMA 23, ball screws"
+    },
+    {
+      "id": "onefinity-elite",
+      "name": "Onefinity Elite",
+      "voltage": "48 V",
+      "workArea": "609×406×102 mm (24×16×4 in)",
+      "maxFeed": "4000 mm/min",
+      "spindle": "Router / 2.2 kW",
+      "controller": "GRBL / grblHAL",
+      "notes": "NEMA 23, ball screws"
+    },
+    {
+      "id": "generic-3018",
+      "name": "Generic 3018",
+      "voltage": "12–24 V",
+      "workArea": "300×180×45 mm",
+      "maxFeed": "1000 mm/min",
+      "spindle": "Spindle / 200 W or Laser",
+      "controller": "GRBL",
+      "notes": "Common 3018 CNC"
+    },
+    {
+      "id": "custom",
+      "name": "Custom",
+      "voltage": "",
+      "workArea": "",
+      "maxFeed": "",
+      "spindle": "",
+      "controller": "",
+      "notes": "User-defined machine"
+    }
+  ],
+  "activeMachineProfile": "onefinity-journeyman",
+  "wcsOffsets": {}
+}

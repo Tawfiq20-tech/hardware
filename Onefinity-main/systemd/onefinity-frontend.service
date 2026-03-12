@@ -1,0 +1,35 @@
+[Unit]
+Description=Onefinity CNC Frontend Service (Nginx)
+Documentation=https://github.com/your-repo/onefinity
+After=network-online.target nginx.service onefinity-backend.service
+Wants=network-online.target
+Requires=nginx.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=root
+Group=root
+
+# Enable the Onefinity Nginx site
+ExecStart=/bin/bash -c '\
+  ln -sf /etc/nginx/sites-available/onefinity /etc/nginx/sites-enabled/ && \
+  nginx -t && \
+  systemctl reload nginx'
+
+# Disable the site on stop
+ExecStop=/bin/bash -c '\
+  rm -f /etc/nginx/sites-enabled/onefinity && \
+  systemctl reload nginx'
+
+# Restart policy
+Restart=on-failure
+RestartSec=5s
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=onefinity-frontend
+
+[Install]
+WantedBy=multi-user.target

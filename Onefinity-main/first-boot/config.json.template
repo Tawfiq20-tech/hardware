@@ -1,0 +1,74 @@
+{
+  "system": {
+    "hostname": "onefinity-cnc",
+    "timezone": "UTC",
+    "locale": "en_US.UTF-8"
+  },
+  "network": {
+    "enable_mdns": true,
+    "enable_firewall": true,
+    "wifi": {
+      "enabled": false,
+      "ssid": "",
+      "password": ""
+    },
+    "static_ip": {
+      "enabled": false,
+      "interface": "eth0",
+      "address": "",
+      "gateway": "",
+      "dns": "8.8.8.8"
+    }
+  },
+  "deployment": {
+    "mode": "docker",
+    "options": {
+      "docker": {
+        "auto_pull": false,
+        "restart_policy": "always"
+      },
+      "native": {
+        "nodejs_version": "18",
+        "redis_maxmemory": "512mb"
+      }
+    }
+  },
+  "kiosk": {
+    "enabled": true,
+    "url": "http://localhost:6080",
+    "auto_login": true,
+    "hide_cursor_timeout": 5
+  },
+  "hardware": {
+    "serial_port": {
+      "auto_detect": true,
+      "baud_rate": 115200
+    },
+    "touchscreen": {
+      "enabled": true,
+      "calibrated": false
+    },
+    "display": {
+      "resolution": "auto",
+      "rotation": 0
+    }
+  },
+  "services": {
+    "disable": [
+      "bluetooth",
+      "cups",
+      "ModemManager"
+    ]
+  },
+  "optimization": {
+    "swap_size": 1024,
+    "gpu_memory": 256,
+    "overclocking": false
+  },
+  "security": {
+    "change_default_password": true,
+    "ssh_key_only": false,
+    "fail2ban_enabled": true,
+    "auto_updates": true
+  }
+}

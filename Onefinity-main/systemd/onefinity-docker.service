@@ -1,0 +1,41 @@
+[Unit]
+Description=Onefinity CNC Controller - Docker Compose
+Documentation=https://github.com/your-repo/onefinity
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/onefinity/app
+User=root
+Group=docker
+
+# Environment file (can be customized)
+EnvironmentFile=-/opt/onefinity/config/.env
+
+# Pull latest images before starting (optional, comment out for offline)
+ExecStartPre=/usr/bin/docker-compose -f docker-compose.rpi.yml pull --quiet --ignore-pull-failures
+
+# Start all services
+ExecStart=/usr/bin/docker-compose -f docker-compose.rpi.yml up -d --remove-orphans
+
+# Stop all services
+ExecStop=/usr/bin/docker-compose -f docker-compose.rpi.yml down
+
+# Restart policy
+Restart=on-failure
+RestartSec=10s
+
+# Resource limits (adjust for Raspberry Pi)
+MemoryLimit=3G
+CPUQuota=300%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=onefinity-docker
+
+[Install]
+WantedBy=multi-user.target

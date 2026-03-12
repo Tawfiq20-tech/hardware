@@ -1,0 +1,290 @@
+# Onefinity CNC Controller - Required Debian Packages
+# This file lists all packages needed for the Raspberry Pi OS image
+
+# ============================================================================
+# SYSTEM CORE
+# ============================================================================
+apt-transport-https
+ca-certificates
+gnupg
+lsb-release
+software-properties-common
+
+# ============================================================================
+# DEVELOPMENT TOOLS
+# ============================================================================
+build-essential
+git
+cmake
+pkg-config
+libtool
+autoconf
+automake
+
+# ============================================================================
+# PROGRAMMING LANGUAGES & RUNTIMES
+# ============================================================================
+# Node.js (for backend)
+nodejs
+npm
+
+# Python (for utilities and scripts)
+python3
+python3-pip
+python3-dev
+python3-setuptools
+python3-wheel
+python3-venv
+
+# ============================================================================
+# WEB SERVERS & REVERSE PROXIES
+# ============================================================================
+nginx
+nginx-common
+nginx-core
+
+# ============================================================================
+# DATABASES & CACHING
+# ============================================================================
+redis-server
+redis-tools
+
+# ============================================================================
+# CONTAINERIZATION
+# ============================================================================
+docker.io
+docker-compose
+containerd
+runc
+
+# ============================================================================
+# DISPLAY & GRAPHICAL INTERFACE
+# ============================================================================
+# X11 Display Server
+xserver-xorg
+xserver-xorg-core
+xserver-xorg-input-all
+xserver-xorg-video-all
+x11-xserver-utils
+x11-utils
+xinit
+xauth
+
+# Display Manager
+lightdm
+lightdm-gtk-greeter
+
+# Chromium Browser (for kiosk mode)
+chromium-browser
+chromium-codecs-ffmpeg-extra
+
+# Desktop utilities
+unclutter
+xdotool
+wmctrl
+xautomation
+
+# ============================================================================
+# TOUCHSCREEN SUPPORT
+# ============================================================================
+libinput-tools
+libinput10
+xserver-xorg-input-libinput
+xinput
+xinput-calibrator
+evtest
+
+# ============================================================================
+# SERIAL COMMUNICATION
+# ============================================================================
+# Serial port libraries
+libserialport0
+libserialport-dev
+
+# Serial utilities
+minicom
+picocom
+screen
+cu
+setserial
+
+# USB utilities
+usbutils
+usb-modeswitch
+usb-modeswitch-data
+
+# ============================================================================
+# NETWORK SERVICES
+# ============================================================================
+# Avahi (mDNS/Zeroconf)
+avahi-daemon
+avahi-utils
+libnss-mdns
+
+# Network utilities
+net-tools
+iproute2
+iputils-ping
+dnsutils
+traceroute
+tcpdump
+nmap
+iptables
+ethtool
+
+# DNS
+dnsmasq
+
+# ============================================================================
+# SECURITY
+# ============================================================================
+# Firewall
+ufw
+
+# SSH
+openssh-server
+openssh-client
+
+# Fail2ban (brute force protection)
+fail2ban
+
+# Automatic security updates
+unattended-upgrades
+apt-listchanges
+
+# Certificate management
+certbot
+
+# ============================================================================
+# SYSTEM MONITORING & MANAGEMENT
+# ============================================================================
+# System monitoring
+htop
+iotop
+iftop
+nmon
+sysstat
+lm-sensors
+stress
+
+# Log management
+logrotate
+rsyslog
+
+# Process management
+supervisor
+tmux
+screen
+
+# ============================================================================
+# FILE COMPRESSION & ARCHIVING
+# ============================================================================
+zip
+unzip
+gzip
+bzip2
+xz-utils
+p7zip-full
+tar
+
+# ============================================================================
+# TEXT EDITORS
+# ============================================================================
+vim
+vim-common
+nano
+
+# ============================================================================
+# UTILITIES
+# ============================================================================
+curl
+wget
+rsync
+tree
+jq
+bc
+cron
+at
+sudo
+dirmngr
+dialog
+whiptail
+
+# ============================================================================
+# HARDWARE ACCESS
+# ============================================================================
+# GPIO and hardware interfaces
+libraspberrypi-bin
+libraspberrypi-dev
+libraspberrypi0
+raspi-config
+
+# I2C and SPI
+i2c-tools
+python3-smbus
+python3-spidev
+
+# ============================================================================
+# AUDIO (optional, for alerts)
+# ============================================================================
+alsa-utils
+pulseaudio
+
+# ============================================================================
+# FONTS (for better UI rendering in Chromium)
+# ============================================================================
+fonts-dejavu
+fonts-dejavu-core
+fonts-dejavu-extra
+fonts-liberation
+fonts-noto
+fonts-noto-color-emoji
+
+# ============================================================================
+# LOCALIZATION
+# ============================================================================
+locales
+keyboard-configuration
+console-setup
+
+# ============================================================================
+# BLUETOOTH (can be disabled to save resources)
+# ============================================================================
+bluez
+bluez-tools
+pi-bluetooth
+
+# ============================================================================
+# ADDITIONAL LIBRARIES
+# ============================================================================
+# SSL/TLS
+libssl-dev
+libssl3
+
+# Compression
+zlib1g
+zlib1g-dev
+
+# JSON
+libjson-c5
+
+# USB
+libusb-1.0-0
+libusb-1.0-0-dev
+
+# udev
+libudev-dev
+libudev1
+
+# ============================================================================
+# PERFORMANCE & OPTIMIZATION
+# ============================================================================
+cpufrequtils
+irqbalance
+
+# ============================================================================
+# DOCUMENTATION (optional, can be excluded to save space)
+# ============================================================================
+# man-db
+# manpages
+# manpages-dev

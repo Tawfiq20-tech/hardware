@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GRBL-HAL Backend Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background: #1a1a1a; color: #fff; }
+        .container { max-width: 800px; margin: 0 auto; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #333; border-radius: 5px; }
+        button { padding: 10px 15px; margin: 5px; background: #4a90e2; color: white; border: none; border-radius: 3px; cursor: pointer; }
+        button:hover { background: #357abd; }
+        button:disabled { background: #666; cursor: not-allowed; }
+        .status { padding: 10px; margin: 10px 0; border-radius: 3px; }
+        .status.connected { background: #2d5a2d; }
+        .status.disconnected { background: #5a2d2d; }
+        .status.initializing { background: #5a4d2d; }
+        #console { background: #000; padding: 10px; height: 300px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+        #ports { width: 100%; padding: 8px; margin: 10px 0; }
+    </style>
+    <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>GRBL-HAL Backend Test</h1>
+        
+        <div class="section">
+            <h2>Connection Status</h2>
+            <div id="status" class="status disconnected">Disconnected</div>
+            <div id="firmware-info"></div>
+        </div>
+
+        <div class="section">
+            <h2>Serial Connection</h2>
+            <button onclick="refreshPorts()">Refresh Ports</button>
+            <select id="ports">
+                <option>Loading ports...</option>
+            </select>
+            <button onclick="connect()" id="connectBtn">Connect</button>
+            <button onclick="disconnect()" id="disconnectBtn" disabled>Disconnect</button>
+        </div>
+
+        <div class="section">
+            <h2>GRBL Commands</h2>
+            <button onclick="sendCommand('$I')" class="grbl-cmd">Build Info ($I)</button>
+            <button onclick="sendCommand('$$')" class="grbl-cmd">Settings ($$)</button>
+            <button onclick="sendCommand('$#')" class="grbl-cmd">Work Coordinates ($#)</button>
+            <button onclick="sendCommand('$G')" class="grbl-cmd">Parser State ($G)</button>
+            <button onclick="sendCommand('\\x18')" class="grbl-cmd">Soft Reset</button>
+            <button onclick="sendCommand('?')" class="grbl-cmd">Status (?)</button>
+        </div>
+
+        <div class="section">
+            <h2>Console</h2>
+            <div id="console"></div>
+            <button onclick="clearConsole()">Clear Console</button>
+        </div>
+    </div>
+
+    <script>
+        const socket = io('http://localhost:4000');
+        let connected = false;
+        let initialized = false;
+        let firmwareType = '';
+        let firmwareVersion = '';
+
+        // Socket event listeners
+        socket.on('connect', () => {
+            addConsoleLog('Socket.io connected to backend');
+        });
+
+        socket.on('disconnect', () => {
+            addConsoleLog('Socket.io disconnected from backend');
+        });
+
+        socket.on('controller:state', (state) => {
+            addConsoleLog(`Controller state: ${state}`);
+            updateStatus();
+        });
+
+        socket.on('controller:position', (pos) => {
+            addConsoleLog(`Position: X${pos.x} Y${pos.y} Z${pos.z}`);
+        });
+
+        socket.on('controller:console', (payload) => {
+            addConsoleLog(`GRBL: ${payload.text}`, payload.type || 'system');
+        });
+
+        socket.on('connection:opened', () => {
+            connected = true;
+            initialized = false;
+            addConsoleLog('✅ Connected to controller', 'success');
+            updateStatus();
+            updateButtons();
+        });
+
+        socket.on('controller:initialized', (info) => {
+            initialized = true;
+            firmwareType = info.firmwareType;
+            firmwareVersion = info.firmwareVersion;
+            addConsoleLog(`✅ Controller initialized: ${info.firmwareType} ${info.firmwareVersion}`, 'success');
+            updateStatus();
+        });
+
+        socket.on('connection:closed', () => {
+            connected = false;
+            initialized = false;
+            addConsoleLog('❌ Disconnected from controller', 'warning');
+            updateStatus();
+            updateButtons();
+        });
+
+        socket.on('connection:error', (payload) => {
+            addConsoleLog(`❌ Connection error: ${payload.message}`, 'error');
+        });
+
+        socket.on('ports', (ports) => {
+            const portsSelect = document.getElementById('ports');
+            portsSelect.innerHTML = '';
+            
+            if (ports.length === 0) {
+                portsSelect.innerHTML = '<option>No ports found</option>';
+            } else {
+                ports.forEach(port => {
+                    const option = document.createElement('option');
+                    option.value = port.path;
+                    option.textContent = `${port.path} - ${port.manufacturer || 'Unknown'}`;
+                    portsSelect.appendChild(option);
+                });
+            }
+        });
+
+        // Functions
+        function updateStatus() {
+            const statusDiv = document.getElementById('status');
+            const firmwareDiv = document.getElementById('firmware-info');
+            
+            if (!connected) {
+                statusDiv.textContent = 'Disconnected';
+                statusDiv.className = 'status disconnected';
+                firmwareDiv.textContent = '';
+            } else if (connected && !initialized) {
+                statusDiv.textContent = 'Initializing...';
+                statusDiv.className = 'status initializing';
+                firmwareDiv.textContent = 'Waiting for controller initialization...';
+            } else {
+                statusDiv.textContent = 'Connected & Initialized';
+                statusDiv.className = 'status connected';
+                firmwareDiv.textContent = `Firmware: ${firmwareType} ${firmwareVersion}`;
+            }
+        }
+
+        function updateButtons() {
+            const connectBtn = document.getElementById('connectBtn');
+            const disconnectBtn = document.getElementById('disconnectBtn');
+            const grblCmds = document.querySelectorAll('.grbl-cmd');
+            
+            connectBtn.disabled = connected;
+            disconnectBtn.disabled = !connected;
+            
+            grblCmds.forEach(btn => {
+                btn.disabled = !connected;
+            });
+        }
+
+        function addConsoleLog(message, type = 'info') {
+            const console = document.getElementById('console');
+            const timestamp = new Date().toLocaleTimeString();
+            const color = {
+                'success': '#4ade80',
+                'warning': '#fbbf24',
+                'error': '#f87171',
+                'system': '#94a3b8',
+                'info': '#60a5fa'
+            }[type] || '#94a3b8';
+            
+            console.innerHTML += `<div style="color: ${color};">[${timestamp}] ${message}</div>`;
+            console.scrollTop = console.scrollHeight;
+        }
+
+        function clearConsole() {
+            document.getElementById('console').innerHTML = '';
+        }
+
+        function refreshPorts() {
+            socket.emit('ports:request');
+            addConsoleLog('Requesting available ports...');
+        }
+
+        function connect() {
+            const portsSelect = document.getElementById('ports');
+            const selectedPort = portsSelect.value;
+            
+            if (!selectedPort || selectedPort === 'No ports found') {
+                addConsoleLog('❌ Please select a valid port', 'error');
+                return;
+            }
+            
+            addConsoleLog(`Connecting to ${selectedPort}...`);
+            socket.emit('connect:request', { path: selectedPort, baudRate: 115200 });
+        }
+
+        function disconnect() {
+            addConsoleLog('Disconnecting...');
+            socket.emit('disconnect:request');
+        }
+
+        function sendCommand(cmd) {
+            if (!connected) {
+                addConsoleLog('❌ Not connected to controller', 'error');
+                return;
+            }
+            
+            addConsoleLog(`> ${cmd}`, 'info');
+            socket.emit('command', cmd);
+        }
+
+        // Initialize
+        refreshPorts();
+        updateButtons();
+        addConsoleLog('Backend test page loaded. Backend should be running on port 4000.');
+    </script>
+</body>
+</html>
