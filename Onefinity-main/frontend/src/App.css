@@ -9,7 +9,8 @@
     display: flex;
     flex: 1;
     overflow: hidden;
-    height: calc(100vh - 48px);
+    /* 48px header + 26px status bar */
+    height: calc(100vh - 74px);
 }
 
 .viewport-container {

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Wifi, RefreshCw, ChevronDown, Check, Loader, Gamepad2, PlayCircle, StopCircle, Target } from 'lucide-react';
+import { Wifi, RefreshCw, ChevronDown, Check, Loader, Gamepad2, PlayCircle, StopCircle, Target, Cpu, Layout } from 'lucide-react';
 import { useCNCStore } from '../stores/cncStore';
 import {
     requestBackendPorts,
@@ -11,6 +11,8 @@ import {
     type BackendPort,
 } from '../utils/backendConnection';
 import { JoystickManager, JoystickCNCMapper, type JoystickState } from '../utils/joystickManager';
+import FirmwareSettings from './FirmwareSettings';
+import MachineProfiles from './MachineProfiles';
 import './DevicePanel.css';
 
 export default function DevicePanel() {
@@ -49,7 +51,7 @@ export default function DevicePanel() {
     const [lastJogTime, setLastJogTime] = useState(0);
 
     // UI state
-    const [activeSection, setActiveSection] = useState<'controller' | 'joystick' | 'position'>('controller');
+    const [activeSection, setActiveSection] = useState<'controller' | 'joystick' | 'position' | 'firmware' | 'profiles'>('controller');
 
     // DRO state (reserved for future inline DRO editing)
     const [_editingAxis, _setEditingAxis] = useState<string | null>(null);
@@ -239,18 +241,21 @@ export default function DevicePanel() {
         }
     };
 
+    // Full-bleed sections that take over the entire panel
+    const isFullBleed = activeSection === 'firmware' || activeSection === 'profiles';
+
     return (
-        <div className="device-panel">
-            <div className="device-section">
+        <div className={`device-panel${isFullBleed ? ' full-panel' : ''}`}>
+            <div className={isFullBleed ? 'device-section-fullbleed' : 'device-section'}>
                 {/* Header with Section Tabs */}
-                <div className="section-header-device">
+                <div className="section-header-device" style={isFullBleed ? { maxWidth: '100%', padding: '0 var(--space-5)', margin: 0 } : undefined}>
                     <h3>Device Management</h3>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                         <span className={`backend-status ${backendSocketConnected ? 'online' : 'offline'}`}
                               title={backendSocketConnected ? 'Backend connected' : 'Backend disconnected'}>
                             {backendSocketConnected ? 'Backend Online' : 'Backend Offline'}
                         </span>
-                        <button 
+                        <button
                             className="refresh-btn"
                             onClick={loadPorts}
                             disabled={isRefreshing || !backendSocketConnected}
@@ -286,6 +291,20 @@ export default function DevicePanel() {
                         <Target size={16} />
                         <span>Position (DRO)</span>
                         {connected && <span className="tab-badge">●</span>}
+                    </button>
+                    <button
+                        className={`section-tab ${activeSection === 'firmware' ? 'active' : ''}`}
+                        onClick={() => setActiveSection('firmware')}
+                    >
+                        <Cpu size={16} />
+                        <span>Firmware</span>
+                    </button>
+                    <button
+                        className={`section-tab ${activeSection === 'profiles' ? 'active' : ''}`}
+                        onClick={() => setActiveSection('profiles')}
+                    >
+                        <Layout size={16} />
+                        <span>Profiles</span>
                     </button>
                 </div>
 
@@ -625,6 +644,20 @@ export default function DevicePanel() {
                                 </div>
                             </div>
                         </div>
+                    </div>
+                )}
+
+                {/* Firmware Settings Section */}
+                {activeSection === 'firmware' && (
+                    <div className="device-content">
+                        <FirmwareSettings />
+                    </div>
+                )}
+
+                {/* Machine Profiles Section */}
+                {activeSection === 'profiles' && (
+                    <div className="device-content">
+                        <MachineProfiles />
                     </div>
                 )}
 

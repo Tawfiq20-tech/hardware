@@ -155,6 +155,44 @@
     transform: none;
 }
 
+/* Outline / Start-From-Line buttons */
+.job-control-bar .job-outline-btn,
+.job-control-bar .job-startfrom-btn {
+    width: 36px;
+    height: 36px;
+    border-radius: 7px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.06);
+    color: #888;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s ease;
+    flex-shrink: 0;
+}
+
+.job-control-bar .job-outline-btn:hover:not(:disabled) {
+    background: rgba(167, 139, 250, 0.15);
+    border-color: rgba(167, 139, 250, 0.35);
+    color: #a78bfa;
+    transform: translateY(-1px);
+}
+
+.job-control-bar .job-startfrom-btn:hover:not(:disabled) {
+    background: rgba(74, 144, 226, 0.15);
+    border-color: rgba(74, 144, 226, 0.35);
+    color: #4a90e2;
+    transform: translateY(-1px);
+}
+
+.job-control-bar .job-outline-btn:disabled,
+.job-control-bar .job-startfrom-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+    transform: none;
+}
+
 /* Responsive design */
 @media (max-width: 768px) {
     .job-control-bar {

@@ -1,4 +1,5 @@
-import { Play, Pause, Square, Zap } from 'lucide-react';
+import { useState } from 'react';
+import { Play, Pause, Square, Zap, SkipForward, Maximize2 } from 'lucide-react';
 import { useCNCStore } from '../stores/cncStore';
 import {
     backendJobStart,
@@ -8,9 +9,14 @@ import {
     sendBackendCommand,
 } from '../utils/backendConnection';
 import controller from '../utils/controller';
+import StartFromLine from './StartFromLine';
+import RunOutline from './RunOutline';
 import './JobControlBar.css';
 
 export default function JobControlBar() {
+    const [showStartFromLine, setShowStartFromLine] = useState(false);
+    const [showRunOutline, setShowRunOutline] = useState(false);
+
     const {
         connected,
         machineState,
@@ -63,45 +69,72 @@ export default function JobControlBar() {
     if (gcode.length === 0) return null;
 
     return (
-        <div className="job-control-bar">
-            <button
-                className={`job-play-btn ${machineState === 'running' ? 'running' : ''}`}
-                onClick={handlePlayPause}
-                disabled={isJobDisabled}
-                title={machineState === 'running' ? 'Pause' : 'Play'}
-            >
-                {machineState === 'running' ? <Pause size={16} /> : <Play size={16} />}
-            </button>
+        <>
+            <div className="job-control-bar">
+                <button
+                    className={`job-play-btn ${machineState === 'running' ? 'running' : ''}`}
+                    onClick={handlePlayPause}
+                    disabled={isJobDisabled}
+                    title={machineState === 'running' ? 'Pause' : 'Play'}
+                >
+                    {machineState === 'running' ? <Pause size={16} /> : <Play size={16} />}
+                </button>
 
-            <div className="job-info">
-                <div className="job-stats-row">
-                    <span>Lines <span className="job-stat-val">{gcode.length}</span></span>
-                    <span>Current <span className="job-stat-val">{currentLine}</span></span>
-                    <span><span className="job-stat-val">{Math.round(jobProgress)}%</span></span>
+                <div className="job-info">
+                    <div className="job-stats-row">
+                        <span>Lines <span className="job-stat-val">{gcode.length}</span></span>
+                        <span>Current <span className="job-stat-val">{currentLine}</span></span>
+                        <span><span className="job-stat-val">{Math.round(jobProgress)}%</span></span>
+                    </div>
+                    <div className="job-progress-bar">
+                        <div className="job-progress-fill" style={{ width: `${jobProgress}%` }} />
+                    </div>
                 </div>
-                <div className="job-progress-bar">
-                    <div className="job-progress-fill" style={{ width: `${jobProgress}%` }} />
-                </div>
+
+                <button
+                    className="job-outline-btn"
+                    onClick={() => setShowRunOutline(true)}
+                    disabled={!connected}
+                    title="Run Outline"
+                >
+                    <Maximize2 size={14} />
+                </button>
+
+                <button
+                    className="job-startfrom-btn"
+                    onClick={() => setShowStartFromLine(true)}
+                    disabled={!connected || gcode.length === 0}
+                    title="Start From Line"
+                >
+                    <SkipForward size={14} />
+                </button>
+
+                <button
+                    className="job-stop-btn"
+                    onClick={handleStop}
+                    disabled={!canStop}
+                    title="Stop"
+                >
+                    <Square size={14} />
+                </button>
+
+                <button
+                    className="emergency-stop-btn"
+                    onClick={handleEmergencyStop}
+                    disabled={!connected}
+                    title="Emergency Stop (Feed Hold + Reset)"
+                >
+                    <Zap size={14} />
+                    E-STOP
+                </button>
             </div>
 
-            <button
-                className="job-stop-btn"
-                onClick={handleStop}
-                disabled={!canStop}
-                title="Stop"
-            >
-                <Square size={14} />
-            </button>
-
-            <button
-                className="emergency-stop-btn"
-                onClick={handleEmergencyStop}
-                disabled={!connected}
-                title="Emergency Stop (Feed Hold + Reset)"
-            >
-                <Zap size={14} />
-                E-STOP
-            </button>
-        </div>
+            {showStartFromLine && (
+                <StartFromLine onClose={() => setShowStartFromLine(false)} />
+            )}
+            {showRunOutline && (
+                <RunOutline onClose={() => setShowRunOutline(false)} />
+            )}
+        </>
     );
 }

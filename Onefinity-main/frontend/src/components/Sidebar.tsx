@@ -3,7 +3,7 @@ import {
     ChevronUp, ChevronDown,
     Upload, File, X, Play, Terminal,
     Settings, Info, Check, AlertTriangle, Circle, Plus, Edit, Trash2,
-    RefreshCw, RotateCcw, FileText,
+    RefreshCw, RotateCcw, FileText, Crosshair,
 } from 'lucide-react';
 import { useCNCStore } from '../stores/cncStore';
 import { formatAxisValue, formatFileSize } from '../utils/formatters';
@@ -13,10 +13,14 @@ import {
     sendBackendCommand,
     backendJog,
 } from '../utils/backendConnection';
+import ProbeWizard from './ProbeWizard';
+import SurfacingTool from './SurfacingTool';
+import CoolantControl from './CoolantControl';
+import SpindleLaserControl from './SpindleLaserControl';
 import './Sidebar.css';
 
 // ── Settings Tabs ─────────────────────────────
-const SETTINGS_TABS = ['Position', 'Jog', 'Macros', 'Console'] as const;
+const SETTINGS_TABS = ['Position', 'Jog', 'Surface', 'Probe', 'Controls', 'Macros', 'Console'] as const;
 type SettingsTab = typeof SETTINGS_TABS[number];
 
 export default function Sidebar() {
@@ -405,8 +409,14 @@ export default function Sidebar() {
                             onClick={() => setSettingsTab(tab)}
                             role="tab"
                             aria-selected={settingsTab === tab}
+                            title={tab}
                         >
-                            {tab}
+                            {tab === 'Probe' ? (
+                                <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                                    <Crosshair size={11} />
+                                    {tab}
+                                </span>
+                            ) : tab}
                         </button>
                     ))}
                 </div>
@@ -569,6 +579,40 @@ export default function Sidebar() {
                     </div>
                 )}
 
+
+                {/* ──── Tab Content: Surface ──── */}
+                {settingsTab === 'Surface' && (
+                    <div className="sidebar-section" style={{ borderBottom: 'none', padding: 0 }}>
+                        <SurfacingTool />
+                    </div>
+                )}
+
+                {/* ──── Tab Content: Probe ──── */}
+                {settingsTab === 'Probe' && (
+                    <div className="sidebar-section" style={{ borderBottom: 'none', padding: 0, display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 }}>
+                        <ProbeWizard />
+                    </div>
+                )}
+
+                {/* ──── Tab Content: Controls (Coolant + Spindle/Laser) ──── */}
+                {settingsTab === 'Controls' && (
+                    <div className="sidebar-section" style={{ borderBottom: 'none' }}>
+                        <div className="section-header" style={{ marginBottom: '12px' }}>
+                            <span className="section-label">Machine Controls</span>
+                        </div>
+
+                        <div style={{ marginBottom: '16px' }}>
+                            <CoolantControl />
+                        </div>
+
+                        <div className="sidebar-divider" />
+
+                        <div style={{ marginTop: '16px' }}>
+                            <div className="section-label" style={{ marginBottom: '8px' }}>Spindle / Laser</div>
+                            <SpindleLaserControl />
+                        </div>
+                    </div>
+                )}
 
                 {/* ──── Tab Content: Macros ──── */}
                 {settingsTab === 'Macros' && (

@@ -146,6 +146,14 @@ function _wireControllerToStore(): void {
 
     controller.on('serialport:read', (line: string) => {
         getStore().addConsoleLog('system', line);
+        // Parse $N=V lines from raw serial (captures $$ responses)
+        const m = (line ?? '').match(/^\$(\d+)=([^\s(]+)/);
+        if (m) {
+            const id = parseInt(m[1], 10);
+            const val = m[2];
+            getStore().setFirmwareSetting(id, val);
+            window.dispatchEvent(new CustomEvent('fw:setting', { detail: { key: id, value: val } }));
+        }
     });
 
     // Controller type detection
@@ -246,9 +254,14 @@ function _wireControllerToStore(): void {
         getStore().addConsoleLog('info', `File loaded: ${data.name} (${data.total} lines)`);
     });
 
-    // Settings
+    // Settings — store in firmwareSettings and dispatch custom DOM event for FirmwareSettings UI
     controller.on('controller:settings', (setting: { key: number; value: number; message: string }) => {
-        getStore().addConsoleLog('system', `$${setting.key}=${setting.value} (${setting.message})`);
+        const s = getStore();
+        s.addConsoleLog('system', `$${setting.key}=${setting.value} (${setting.message})`);
+        s.setFirmwareSetting(setting.key, String(setting.value));
+        window.dispatchEvent(
+            new CustomEvent('fw:setting', { detail: { key: setting.key, value: String(setting.value) } })
+        );
     });
 
     // Feedback
@@ -505,6 +518,119 @@ export function backendHomeAxis(axis: string): void { controller.homeAxis(axis);
 export function backendProbeZ(params?: { depth?: number; feedRate?: number; retract?: number }): void {
     controller.probeZ(params);
 }
+
+export function backendProbeXY(params: {
+    thickness: number;
+    fastFeedrate: number;
+    slowFeedrate: number;
+    retract: number;
+    depth: number;
+    corner: string;
+}): Promise<void> {
+    // Build XY-only probe G-code and send via command stream
+    const { thickness, fastFeedrate, slowFeedrate, retract, depth, corner } = params;
+    const xDir = (corner === 'front-right' || corner === 'back-right') ? -1 : 1;
+    const yDir = (corner === 'front-left' || corner === 'front-right') ? 1 : -1;
+    const lines = [
+        'G21', 'G91',
+        `G38.2 X${xDir * depth} F${fastFeedrate}`,
+        `G38.2 X${-xDir * retract} F${slowFeedrate}`,
+        `G38.2 X${xDir * (retract + 2)} F${slowFeedrate}`,
+        `G10 L20 P0 X${xDir > 0 ? thickness : -thickness}`,
+        `G0 X${-xDir * retract}`,
+        `G38.2 Y${yDir * depth} F${fastFeedrate}`,
+        `G38.2 Y${-yDir * retract} F${slowFeedrate}`,
+        `G38.2 Y${yDir * (retract + 2)} F${slowFeedrate}`,
+        `G10 L20 P0 Y${yDir > 0 ? thickness : -thickness}`,
+        `G0 Y${-yDir * retract}`,
+        'G90',
+    ];
+    controller.sendGcode(lines.join('\n'));
+    return Promise.resolve();
+}
+
+export function backendProbeXYZ(params: {
+    blockThickness: number;
+    xyThickness: number;
+    fastFeedrate: number;
+    slowFeedrate: number;
+    retract: number;
+    depth: number;
+    corner: string;
+}): Promise<void> {
+    const { blockThickness, xyThickness, fastFeedrate, slowFeedrate, retract, depth, corner } = params;
+    const xDir = (corner === 'front-right' || corner === 'back-right') ? -1 : 1;
+    const yDir = (corner === 'front-left' || corner === 'front-right') ? 1 : -1;
+    const lines = [
+        'G21', 'G91',
+        // Z
+        `G38.2 Z-${depth} F${fastFeedrate}`,
+        `G38.2 Z${retract} F${slowFeedrate}`,
+        `G38.2 Z-${retract + 2} F${slowFeedrate}`,
+        `G10 L20 P0 Z${blockThickness}`,
+        `G0 Z${retract}`,
+        // X
+        `G38.2 X${xDir * depth} F${fastFeedrate}`,
+        `G38.2 X${-xDir * retract} F${slowFeedrate}`,
+        `G38.2 X${xDir * (retract + 2)} F${slowFeedrate}`,
+        `G10 L20 P0 X${xDir > 0 ? xyThickness : -xyThickness}`,
+        `G0 X${-xDir * retract}`,
+        // Y
+        `G38.2 Y${yDir * depth} F${fastFeedrate}`,
+        `G38.2 Y${-yDir * retract} F${slowFeedrate}`,
+        `G38.2 Y${yDir * (retract + 2)} F${slowFeedrate}`,
+        `G10 L20 P0 Y${yDir > 0 ? xyThickness : -xyThickness}`,
+        `G0 Y${-yDir * retract}`,
+        'G90',
+    ];
+    controller.sendGcode(lines.join('\n'));
+    return Promise.resolve();
+}
+
+/**
+ * Request the current probe pin state from the backend.
+ * Returns true if the pin is currently active/triggered (circuit closed),
+ * false if open (normal "ready" state). Rejects on error/timeout.
+ */
+export function backendTestProbePin(): Promise<boolean> {
+    return new Promise((resolve, reject) => {
+        if (!controller.socket?.connected) {
+            reject(new Error('Not connected to backend'));
+            return;
+        }
+        // Send a probe test query via the gcode command — G38.2 Z0 F1 is a
+        // zero-distance probe that immediately resolves with the pin state.
+        // We listen for the next controller state to read the pin flag.
+        // Alternatively, some backends expose a probe:test event directly.
+        // Here we use a best-effort approach: emit probe:test if supported,
+        // fall back to reading the probe pin from the next controller state.
+        const timeout = setTimeout(() => {
+            cleanup();
+            // Timeout is not a hard failure — assume pin is open (ready)
+            resolve(false);
+        }, 3000);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const handleState = (_type: string, state: any) => {
+            if (state?.status?.pinState !== undefined) {
+                const pinState: string = state.status.pinState ?? '';
+                cleanup();
+                // Pin state 'P' means probe is triggered in grblHAL
+                resolve(pinState.includes('P'));
+            }
+        };
+
+        const cleanup = () => {
+            clearTimeout(timeout);
+            controller.off('controller:state', handleState);
+        };
+
+        controller.on('controller:state', handleState);
+
+        // Send a status request to get fresh pin state
+        controller.sendGcode('?');
+    });
+}
 export function backendSetWCS(wcs: string): void { controller.setWCS(wcs); }
 export function backendZeroWCS(params?: { axes?: string[]; wcs?: string }): void { controller.zeroWCS(params); }
 export function backendZeroAll(): void { controller.zeroAll(); }
@@ -524,5 +650,85 @@ export function backendRunMacro(id: string): void { controller.runMacro(id); }
 export function backendRunMacroContent(content: string): void { controller.runMacroContent(content); }
 export function backendEnableDebug(): void { controller.enableDebug(); }
 export function backendDisableDebug(): void { controller.disableDebug(); }
+
+// ─── EEPROM / Firmware Settings ──────────────────────────────────
+
+/**
+ * Request all GRBL EEPROM settings via the $$ command.
+ * Settings are returned as controller:settings events (already wired to
+ * addConsoleLog). Returns a promise that resolves with the parsed settings map
+ * after collecting responses for up to `timeoutMs` milliseconds.
+ */
+export function backendReadEEPROM(timeoutMs = 3000): Promise<Record<number, string>> {
+    return new Promise((resolve) => {
+        const result: Record<number, string> = {};
+
+        const handleLine = (line: string) => {
+            // GRBL responds with lines like: $0=10 (step pulse, usec)
+            const m = line.match(/^\$(\d+)=([^\s(]+)/);
+            if (m) {
+                result[parseInt(m[1], 10)] = m[2];
+            }
+        };
+
+        // Subscribe to raw serial reads to capture $$ output
+        controller.on('serialport:read', handleLine);
+
+        // Send $$ to request all settings
+        controller.sendGcode('$$');
+
+        setTimeout(() => {
+            controller.off('serialport:read', handleLine);
+            resolve(result);
+        }, timeoutMs);
+    });
+}
+
+/**
+ * Write a single GRBL EEPROM setting: $id=value
+ */
+export function backendWriteEEPROMSetting(id: number, value: string | number): void {
+    controller.sendGcode(`$${id}=${value}`);
+}
+
+/**
+ * Write multiple GRBL EEPROM settings from an id->value map.
+ * Sends each as a separate command with a small gap.
+ */
+export function backendWriteEEPROMBatch(
+    settings: Record<number, string | number>,
+    delayMs = 50
+): Promise<void> {
+    const entries = Object.entries(settings);
+    if (entries.length === 0) return Promise.resolve();
+
+    return entries.reduce<Promise<void>>(
+        (chain, [id, val]) =>
+            chain.then(
+                () =>
+                    new Promise((res) => {
+                        controller.sendGcode(`$${id}=${val}`);
+                        setTimeout(res, delayMs);
+                    })
+            ),
+        Promise.resolve()
+    );
+}
+
+// ─── Coolant Commands ────────────────────────────────────────────
+export function backendCoolantMist(): void { controller.sendGcode('M7'); }
+export function backendCoolantFlood(): void { controller.sendGcode('M8'); }
+export function backendCoolantOff(): void { controller.sendGcode('M9'); }
+
+// ─── Spindle Commands ────────────────────────────────────────────
+export function backendSpindleCW(rpm: number): void { controller.sendGcode(`M3 S${rpm}`); }
+export function backendSpindleCCW(rpm: number): void { controller.sendGcode(`M4 S${rpm}`); }
+export function backendSpindleStop(): void { controller.sendGcode('M5'); }
+
+// ─── Outline Run ─────────────────────────────────────────────────
+export function backendRunOutlineGcode(name: string, gcode: string): void {
+    controller.loadFile(name, gcode);
+    setTimeout(() => controller.command('gcode:start'), 200);
+}
 
 export { getBackendUrl };

@@ -6,9 +6,56 @@
     padding: var(--space-6);
 }
 
+/* When showing full-bleed sub-panels (Firmware, Profiles) we switch to flex column */
+.device-panel.full-panel {
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
 .device-section {
     max-width: 600px;
     margin: 0 auto;
+}
+
+/* Full-height content for Firmware / Profiles panels */
+.device-content.full-height {
+    flex: 1;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    animation: none;
+}
+
+/* Full-bleed container (no max-width) for firmware / profiles */
+.device-section-fullbleed {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    overflow: hidden;
+    width: 100%;
+}
+
+.device-section-fullbleed .section-header-device {
+    border-bottom: 1px solid var(--border-ui);
+    padding: var(--space-4) var(--space-5);
+    margin-bottom: 0;
+}
+
+.device-section-fullbleed .device-section-tabs {
+    padding: var(--space-2) var(--space-5);
+    border-bottom: 1px solid var(--border-ui);
+    margin-bottom: 0;
+    background: var(--bg-panel);
+    border-radius: 0;
+}
+
+.device-section-fullbleed .device-content {
+    flex: 1;
+    overflow: hidden;
+    animation: none;
 }
 
 /* Section Header */

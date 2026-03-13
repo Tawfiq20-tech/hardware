@@ -19,6 +19,8 @@ import { jogDistanceStorage, coordSystemStorage } from '../utils/localStorage';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type CoordSystem = 'Z' | 'XYZ' | 'XY' | 'X' | 'Y';
+export type CoolantState = 'off' | 'mist' | 'flood';
+export type SpindleMode = 'spindle' | 'laser';
 
 interface CNCStore {
     // Connection
@@ -150,6 +152,35 @@ interface CNCStore {
     setEthernet: (v: EthernetConfig | ((prev: EthernetConfig) => EthernetConfig)) => void;
     setProbeSettings: (v: ProbeSettings | ((prev: ProbeSettings) => ProbeSettings)) => void;
     setAppPreferences: (v: AppPreferences | ((prev: AppPreferences) => AppPreferences)) => void;
+
+    // Coolant State
+    coolantState: CoolantState;
+    setCoolantState: (state: CoolantState) => void;
+
+    // Spindle / Laser
+    spindleMode: SpindleMode;
+    setSpindleMode: (mode: SpindleMode) => void;
+    spindleRpm: number;
+    setSpindleRpm: (rpm: number) => void;
+    spindleRunning: boolean;
+    setSpindleRunning: (running: boolean) => void;
+    laserPower: number;
+    setLaserPower: (power: number) => void;
+
+    // Probe Wizard
+    probeWizard: {
+        status: 'idle' | 'running' | 'success' | 'error';
+        lastRoutine: string | null;
+        lastPlateType: string | null;
+        lastRunAt: number | null;
+    };
+    setProbeWizardStatus: (status: 'idle' | 'running' | 'success' | 'error', meta?: { routine?: string; plateType?: string }) => void;
+
+    // Firmware (EEPROM) settings: id -> value
+    firmwareSettings: Record<number, string>;
+    setFirmwareSetting: (id: number, value: string) => void;
+    setFirmwareSettings: (settings: Record<number, string>) => void;
+    clearFirmwareSettings: () => void;
 }
 
 export const useCNCStore = create<CNCStore>((set) => ({
@@ -336,4 +367,42 @@ export const useCNCStore = create<CNCStore>((set) => ({
     setEthernet: (v) => set((s) => ({ ethernet: typeof v === 'function' ? v(s.ethernet) : v })),
     setProbeSettings: (v) => set((s) => ({ probeSettings: typeof v === 'function' ? v(s.probeSettings) : v })),
     setAppPreferences: (v) => set((s) => ({ appPreferences: typeof v === 'function' ? v(s.appPreferences) : v })),
+
+    // Coolant State
+    coolantState: 'off',
+    setCoolantState: (coolantState) => set({ coolantState }),
+
+    // Spindle / Laser
+    spindleMode: 'spindle',
+    setSpindleMode: (spindleMode) => set({ spindleMode }),
+    spindleRpm: 10000,
+    setSpindleRpm: (spindleRpm) => set({ spindleRpm }),
+    spindleRunning: false,
+    setSpindleRunning: (spindleRunning) => set({ spindleRunning }),
+    laserPower: 10,
+    setLaserPower: (laserPower) => set({ laserPower }),
+
+    // Probe Wizard
+    probeWizard: {
+        status: 'idle',
+        lastRoutine: null,
+        lastPlateType: null,
+        lastRunAt: null,
+    },
+    setProbeWizardStatus: (status, meta) => set((s) => ({
+        probeWizard: {
+            ...s.probeWizard,
+            status,
+            ...(meta?.routine !== undefined && { lastRoutine: meta.routine }),
+            ...(meta?.plateType !== undefined && { lastPlateType: meta.plateType }),
+            ...(status === 'running' && { lastRunAt: Date.now() }),
+        },
+    })),
+
+    // Firmware (EEPROM) settings
+    firmwareSettings: {},
+    setFirmwareSetting: (id, value) =>
+        set((s) => ({ firmwareSettings: { ...s.firmwareSettings, [id]: value } })),
+    setFirmwareSettings: (settings) => set({ firmwareSettings: settings }),
+    clearFirmwareSettings: () => set({ firmwareSettings: {} }),
 }));

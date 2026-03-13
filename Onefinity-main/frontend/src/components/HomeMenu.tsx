@@ -10,7 +10,7 @@ import './HomeMenu.css';
 
 type HomeMenuSection = 'machine' | 'device' | 'ethernet' | 'probe' | 'basics';
 
-const SECTIONS: { id: HomeMenuSection; label: string; Icon: React.ComponentType<{ size?: number; className?: string }> }[] = [
+const SECTIONS: { id: HomeMenuSection; label: string; Icon: React.ComponentType<{ size?: string | number; className?: string }> }[] = [
     { id: 'machine', label: 'Machine Information', Icon: Cpu },
     { id: 'device', label: 'Device Info', Icon: Monitor },
     { id: 'ethernet', label: 'Ethernet', Icon: Wifi },
