@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Zap, RotateCcw, Square, AlertTriangle, Flame } from 'lucide-react';
 import { useCNCStore } from '../stores/cncStore';
 import { sendBackendCommand } from '../utils/backendConnection';
@@ -19,6 +19,14 @@ export default function SpindleLaserControl() {
     const [showModeWarning, setShowModeWarning] = useState(false);
     const [pendingMode, setPendingMode] = useState<MachineMode | null>(null);
     const [testFireDuration, setTestFireDuration] = useState(200); // ms
+    const testFireTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    // Cleanup test fire timer on unmount
+    useEffect(() => {
+        return () => {
+            if (testFireTimerRef.current) clearTimeout(testFireTimerRef.current);
+        };
+    }, []);
 
     // GRBL defaults: $30=1000 (max RPM), $31=0 (min RPM)
     const minRpm = 0;
@@ -87,10 +95,16 @@ export default function SpindleLaserControl() {
 
     const handleTestFire = () => {
         if (!connected) return;
+        // Cancel any in-progress test fire
+        if (testFireTimerRef.current) {
+            clearTimeout(testFireTimerRef.current);
+            testFireTimerRef.current = null;
+        }
         const sValue = Math.round((laserPower / 100) * 1000);
         sendBackendCommand(`M3 S${sValue}`);
         addConsoleLog('info', `Laser test fire: ${testFireDuration}ms @ ${laserPower}%`);
-        setTimeout(() => {
+        testFireTimerRef.current = setTimeout(() => {
+            testFireTimerRef.current = null;
             sendBackendCommand('M5');
             addConsoleLog('info', 'Laser test fire complete');
         }, testFireDuration);

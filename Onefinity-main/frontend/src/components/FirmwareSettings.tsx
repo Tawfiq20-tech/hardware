@@ -131,8 +131,9 @@ export default function FirmwareSettings() {
             // backendReadEEPROM sends $$ and collects $N=V responses for 3 seconds
             const result = await backendReadEEPROM(3000);
             const count = Object.keys(result).length;
-            // Merge into store
-            setFirmwareSettings({ ...firmwareSettings, ...result });
+            // Merge into store — read current state at call time to avoid stale closure
+            const currentSettings = useCNCStore.getState().firmwareSettings;
+            setFirmwareSettings({ ...currentSettings, ...result });
             if (count === 0) {
                 showToast('error', 'No settings received — check controller connection.');
             } else {
@@ -141,7 +142,7 @@ export default function FirmwareSettings() {
         } finally {
             setLoading(false);
         }
-    }, [connected, firmwareSettings, setFirmwareSettings, showToast]);
+    }, [connected, setFirmwareSettings, showToast]);
 
     // When store firmwareSettings populates (e.g. from serialport:read events),
     // stop the loading spinner if we have data

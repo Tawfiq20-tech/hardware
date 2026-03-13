@@ -322,9 +322,10 @@ export default function ProbeWizard() {
             return;
         }
 
-        // Persist settings to store + backend
+        // Persist settings to store + backend — read current state at call time
+        const currentProbeSettings = useCNCStore.getState().probeSettings;
         setProbeSettings({
-            ...probeSettings,
+            ...currentProbeSettings,
             touchPlateType: wizard.touchPlateType,
             blockThickness: wizard.blockThickness,
             xyThickness: wizard.xyThickness,
@@ -371,7 +372,7 @@ export default function ProbeWizard() {
             setProbeWizardStatus('error');
             addConsoleLog('error', `Probe failed: ${msg}`);
         }
-    }, [connected, wizard, probeSettings, setProbeSettings, addConsoleLog, setProbeWizardStatus]);
+    }, [connected, wizard, setProbeSettings, addConsoleLog, setProbeWizardStatus]);
 
     const handleCancelProbe = useCallback(() => {
         sendBackendCommand('!'); // feed hold

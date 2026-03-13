@@ -175,7 +175,7 @@ function _wireControllerToStore(): void {
             const mapped = stateMap[state.status.activeState];
             if (mapped) s.setMachineState(mapped);
 
-            // Update position (prefer work position)
+            // Update work position
             if (state.status.wpos) {
                 const newPos = {
                     x: state.status.wpos.x,
@@ -184,6 +184,17 @@ function _wireControllerToStore(): void {
                 };
                 console.log('[Position Update] Work:', newPos);
                 s.setPosition(newPos);
+            }
+
+            // Update machine position
+            if (state.status.mpos) {
+                const newMachinePos = {
+                    x: state.status.mpos.x,
+                    y: state.status.mpos.y,
+                    z: state.status.mpos.z,
+                };
+                console.log('[Position Update] Machine:', newMachinePos);
+                s.setMachinePosition(newMachinePos);
             }
 
             // Update feed rate and spindle
@@ -195,6 +206,11 @@ function _wireControllerToStore(): void {
                 s.setFeedRate(state.status.ov.feed);
                 s.setRapidRate(state.status.ov.rapid);
             }
+        }
+
+        // Track active WCS from parser state
+        if (state.parserstate?.modal?.wcs) {
+            s.setActiveWCS(state.parserstate.modal.wcs);
         }
     });
 
@@ -270,23 +286,6 @@ function _wireControllerToStore(): void {
     });
 
     // ─── New Feature Events ──────────────────────────────────────
-
-    // Machine position (from controller state)
-    controller.on('controller:state', (_type: string, state: ControllerState) => {
-        if (state.status?.mpos) {
-            const newMachinePos = {
-                x: state.status.mpos.x,
-                y: state.status.mpos.y,
-                z: state.status.mpos.z,
-            };
-            console.log('[Position Update] Machine:', newMachinePos);
-            getStore().setMachinePosition(newMachinePos);
-        }
-        // Track active WCS from parser state
-        if (state.parserstate?.modal?.wcs) {
-            getStore().setActiveWCS(state.parserstate.modal.wcs);
-        }
-    });
 
     // Macros
     controller.on('macro:list', (macros: Array<{ id: string; name: string; content: string; createdAt?: number }>) => {

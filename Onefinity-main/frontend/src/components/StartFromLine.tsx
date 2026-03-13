@@ -139,14 +139,14 @@ export default function StartFromLine({ onClose }: StartFromLineProps) {
     }
 
     return (
-        <div className="sfl-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="sfl-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} role="dialog" aria-modal="true" aria-label="Start job from line">
             <div className="sfl-modal">
                 <div className="sfl-header">
                     <div className="sfl-title">
                         <Play size={16} />
                         Start From Line
                     </div>
-                    <button className="sfl-close" onClick={onClose}>
+                    <button className="sfl-close" onClick={onClose} aria-label="Close dialog">
                         <X size={16} />
                     </button>
                 </div>

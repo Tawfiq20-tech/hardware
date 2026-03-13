@@ -127,7 +127,11 @@ function generateDetailedOutline(rawGcode: string, safeZ: number, feedRate: numb
     const maxPts = 200;
     const step = Math.max(1, Math.floor(moves.length / maxPts));
     const sampled = moves.filter((_, i) => i % step === 0);
-    if (sampled.length === 0) return generateSquareOutline(calculateBoundingBox(rawGcode)!, safeZ, feedRate);
+    if (sampled.length === 0) {
+        const bb = calculateBoundingBox(rawGcode);
+        if (!bb) return '';
+        return generateSquareOutline(bb, safeZ, feedRate);
+    }
 
     const outLines = [
         'G90',
@@ -185,14 +189,14 @@ export default function RunOutline({ onClose }: RunOutlineProps) {
     } : null;
 
     return (
-        <div className="ro-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+        <div className="ro-overlay" onClick={(e) => { if (e.target === e.currentTarget) onClose(); }} role="dialog" aria-modal="true" aria-label="Run outline">
             <div className="ro-modal">
                 <div className="ro-header">
                     <div className="ro-title">
                         <Maximize2 size={16} />
                         Run Outline
                     </div>
-                    <button className="ro-close" onClick={onClose}>
+                    <button className="ro-close" onClick={onClose} aria-label="Close dialog">
                         <X size={16} />
                     </button>
                 </div>

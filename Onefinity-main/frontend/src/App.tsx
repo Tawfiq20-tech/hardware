@@ -1,4 +1,3 @@
-import { useRef } from 'react';
 import { useState } from 'react';
 import './App.css';
 import Header from './components/Header';
@@ -13,7 +12,6 @@ import { useKeyboardShortcuts } from './hooks/useKeyboardShortcuts';
 
 function AppInner() {
     const [activeHeaderTab, setActiveHeaderTab] = useState('Prepare');
-    const fileInputTriggerRef = useRef<(() => void) | null>(null);
 
     // Activate global keyboard shortcuts — Ctrl+O triggers file open via sidebar
     useKeyboardShortcuts(() => {
@@ -57,9 +55,6 @@ function AppInner() {
 
             {/* Floating quick-help button */}
             <QuickHelpButton />
-
-            {/* Hidden ref holder */}
-            <span ref={fileInputTriggerRef as React.RefObject<HTMLSpanElement>} style={{ display: 'none' }} />
         </div>
     );
 }

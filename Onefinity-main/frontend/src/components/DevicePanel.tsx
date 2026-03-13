@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { Wifi, RefreshCw, ChevronDown, Check, Loader, Gamepad2, PlayCircle, StopCircle, Target, Cpu, Layout } from 'lucide-react';
 import { useCNCStore } from '../stores/cncStore';
 import {
@@ -56,11 +56,10 @@ export default function DevicePanel() {
     // DRO state (reserved for future inline DRO editing)
     const [_editingAxis, _setEditingAxis] = useState<string | null>(null);
     const [_editValue, _setEditValue] = useState<string>('');
-    const [lastPositionUpdate, setLastPositionUpdate] = useState<number>(Date.now());
-
-    // Track position changes for visual feedback
+    // Track last position update time via ref to avoid re-renders on every position tick
+    const lastPositionUpdateRef = useRef<number>(Date.now());
     useEffect(() => {
-        setLastPositionUpdate(Date.now());
+        lastPositionUpdateRef.current = Date.now();
     }, [position, machinePosition]);
 
     // Sync IP field from Home menu Ethernet when it loads and local field is empty
@@ -382,9 +381,9 @@ export default function DevicePanel() {
                                     width: '100%',
                                     padding: '8px 12px',
                                     borderRadius: '6px',
-                                    border: '1px solid var(--border-color, #333)',
-                                    background: 'var(--bg-secondary, #1a1a2e)',
-                                    color: 'var(--text-primary, #e0e0e0)',
+                                    border: '1px solid var(--border-ui)',
+                                    background: 'var(--bg-input)',
+                                    color: 'var(--text-main)',
                                     fontSize: '13px',
                                 }}
                             />
@@ -568,7 +567,7 @@ export default function DevicePanel() {
                             <div className="dro-header">
                                 <h4>Digital Readout (DRO)</h4>
                                 <div className="dro-status">
-                                    <span className={`status-indicator ${Date.now() - lastPositionUpdate < 1000 ? 'active' : ''}`} title="Position updates"></span>
+                                    <span className={`status-indicator ${Date.now() - lastPositionUpdateRef.current < 1000 ? 'active' : ''}`} title="Position updates"></span>
                                 </div>
                             </div>
                             <div className="wcs-selector-wrapper">
