@@ -25,7 +25,8 @@ type SettingsTab = typeof SETTINGS_TABS[number];
 
 export default function Sidebar() {
     const [settingsTab, setSettingsTab] = useState<SettingsTab>('Position');
-    const [consoleExpanded, setConsoleExpanded] = useState(false);
+    const [consoleExpanded, setConsoleExpanded] = useState(true);
+    const [consoleCmd, setConsoleCmd] = useState('');
     
     // Macro state
     const [macros, setMacros] = useState<Array<{id: string, name: string, content: string}>>([]);
@@ -714,7 +715,6 @@ export default function Sidebar() {
                                 {consoleLines.map((line, i) => (
                                     <div key={i} className={`console-line ${getConsoleClass(line.type)}`}>
                                         <span className="console-icon">{getConsoleIcon(line.type)}</span>
-                                        <span className="console-time">{line.time}</span>
                                         <span className="console-text">{line.text}</span>
                                     </div>
                                 ))}
@@ -724,6 +724,32 @@ export default function Sidebar() {
                                         <p>No messages yet</p>
                                     </div>
                                 )}
+                            </div>
+                            <div className="console-input-row">
+                                <input
+                                    className="console-input"
+                                    type="text"
+                                    placeholder="Type G-code command..."
+                                    value={consoleCmd}
+                                    onChange={(e) => setConsoleCmd(e.target.value)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' && consoleCmd.trim()) {
+                                            sendBackendCommand(consoleCmd.trim());
+                                            addConsoleLog('info', `> ${consoleCmd.trim()}`);
+                                            setConsoleCmd('');
+                                        }
+                                    }}
+                                />
+                                <button
+                                    className="console-send-btn"
+                                    onClick={() => {
+                                        if (consoleCmd.trim()) {
+                                            sendBackendCommand(consoleCmd.trim());
+                                            addConsoleLog('info', `> ${consoleCmd.trim()}`);
+                                            setConsoleCmd('');
+                                        }
+                                    }}
+                                >Send</button>
                             </div>
                         </div>
                     </div>
