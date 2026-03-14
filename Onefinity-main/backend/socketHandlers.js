@@ -134,14 +134,83 @@ function attachSocketHandlers(io) {
             }
         });
 
-        socket.on('command', async (cmd) => {
+        socket.on('command', async (port, cmd, ...args) => {
             try {
                 if (!serialService.isOpen()) {
                     socket.emit('controller:console', { type: 'error', text: 'Not connected' });
                     return;
                 }
-                grblController.send(cmd);
-                socket.emit('controller:console', { type: 'info', text: `> ${cmd}` });
+                // Dispatch known commands to their handlers
+                switch (cmd) {
+                    case 'jog': {
+                        const params = args[0] || {};
+                        const { x, y, z, feedRate } = params;
+                        grblController.jog(x, y, z, feedRate || 1000);
+                        break;
+                    }
+                    case 'jog:safe': {
+                        const params = args[0] || {};
+                        const { x, y, z, feedRate } = params;
+                        grblController.jog(x, y, z, feedRate || 1000);
+                        break;
+                    }
+                    case 'jogcancel':
+                        grblController.jogCancel();
+                        break;
+                    case 'homing':
+                        grblController.home();
+                        break;
+                    case 'unlock':
+                        grblController.unlock();
+                        break;
+                    case 'reset':
+                        grblController.softReset();
+                        break;
+                    case 'feedhold':
+                        grblController.feedHold();
+                        break;
+                    case 'cyclestart':
+                        grblController.cycleStart();
+                        break;
+                    case 'checkmode':
+                        grblController.checkMode();
+                        break;
+                    case 'gcode':
+                        grblController.send(args[0]);
+                        socket.emit('controller:console', { type: 'info', text: `> ${args[0]}` });
+                        break;
+                    case 'gcode:start':
+                        gcodeFeeder.start(0);
+                        break;
+                    case 'gcode:pause':
+                        gcodeFeeder.pause();
+                        break;
+                    case 'gcode:resume':
+                        gcodeFeeder.resume();
+                        break;
+                    case 'gcode:stop':
+                        gcodeFeeder.stop();
+                        break;
+                    case 'gcode:startFromLine':
+                        gcodeFeeder.start(args[0] || 0);
+                        break;
+                    case 'settings':
+                        grblController.getSettings();
+                        break;
+                    case 'buildinfo':
+                        grblController.getBuildInfo();
+                        break;
+                    case 'parserstate':
+                        grblController.getParserState();
+                        break;
+                    case 'workcoordinates':
+                        grblController.getWorkCoordinates();
+                        break;
+                    default:
+                        // Raw command — send directly
+                        grblController.send(cmd);
+                        socket.emit('controller:console', { type: 'info', text: `> ${cmd}` });
+                }
             } catch (err) {
                 socket.emit('controller:console', { type: 'error', text: err.message });
             }

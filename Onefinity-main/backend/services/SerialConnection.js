@@ -407,18 +407,13 @@ class SerialConnection extends EventEmitter {
         // Filter out virtual/built-in serial ports — only show real hardware
         const filtered = ports.filter((p) => {
             const path = p.path || '';
-            // Exclude built-in virtual serial ports (/dev/ttyS0-ttyS99)
+            // Blacklist: exclude known virtual/non-hardware ports
+            // Built-in virtual serial ports (/dev/ttyS0-ttyS99)
             if (/^\/dev\/ttyS\d+$/.test(path)) return false;
-            // Exclude /dev/console, /dev/tty (non-hardware)
+            // Non-hardware system devices
             if (path === '/dev/console' || path === '/dev/tty') return false;
-            // Include: /dev/ttyUSB*, /dev/ttyACM*, /dev/ttyAMA*, COM*, network paths
-            // Also include anything with a vendorId or manufacturer (real USB devices)
-            if (/^\/dev\/tty(USB|ACM|AMA)\d+$/.test(path)) return true;
-            if (/^COM\d+$/i.test(path)) return true;
-            if (p.vendorId || p.manufacturer) return true;
-            // Include network paths (IP addresses)
-            if (isNetworkPath(path)) return true;
-            return false;
+            // Include everything else — real USB devices, network paths, etc.
+            return true;
         });
         return filtered.map((p) => ({
             path: p.path,
