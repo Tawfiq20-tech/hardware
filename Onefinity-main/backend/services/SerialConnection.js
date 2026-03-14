@@ -404,7 +404,23 @@ class SerialConnection extends EventEmitter {
      */
     static async listPorts() {
         const ports = await SerialPort.list();
-        return ports.map((p) => ({
+        // Filter out virtual/built-in serial ports — only show real hardware
+        const filtered = ports.filter((p) => {
+            const path = p.path || '';
+            // Exclude built-in virtual serial ports (/dev/ttyS0-ttyS99)
+            if (/^\/dev\/ttyS\d+$/.test(path)) return false;
+            // Exclude /dev/console, /dev/tty (non-hardware)
+            if (path === '/dev/console' || path === '/dev/tty') return false;
+            // Include: /dev/ttyUSB*, /dev/ttyACM*, /dev/ttyAMA*, COM*, network paths
+            // Also include anything with a vendorId or manufacturer (real USB devices)
+            if (/^\/dev\/tty(USB|ACM|AMA)\d+$/.test(path)) return true;
+            if (/^COM\d+$/i.test(path)) return true;
+            if (p.vendorId || p.manufacturer) return true;
+            // Include network paths (IP addresses)
+            if (isNetworkPath(path)) return true;
+            return false;
+        });
+        return filtered.map((p) => ({
             path: p.path,
             manufacturer: p.manufacturer,
             serialNumber: p.serialNumber,
