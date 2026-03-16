@@ -390,6 +390,66 @@ export default function DevicePanel() {
                             />
                         </div>
 
+                        {/* Serial Settings: Baud Rate & Flow Control */}
+                        <div className="device-selector" style={{ marginTop: '8px' }}>
+                            <label className="device-label">Baud Rate</label>
+                            <select
+                                value={appPreferences?.baudRate ?? 115200}
+                                onChange={(e) => {
+                                    const store = useCNCStore.getState();
+                                    store.setAppPreferences({ ...store.appPreferences, baudRate: Number(e.target.value) });
+                                }}
+                                disabled={connected}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 12px',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-ui)',
+                                    background: 'var(--bg-input)',
+                                    color: 'var(--text-main)',
+                                    fontSize: '13px',
+                                }}
+                            >
+                                <option value={9600}>9600</option>
+                                <option value={19200}>19200</option>
+                                <option value={38400}>38400</option>
+                                <option value={57600}>57600</option>
+                                <option value={115200}>115200 (GRBL/grblHAL)</option>
+                                <option value={230400}>230400 (RTS/Buildbotics)</option>
+                                <option value={250000}>250000</option>
+                            </select>
+                            <small style={{ color: 'var(--text-dim)', fontSize: '11px', marginTop: '2px', display: 'block' }}>
+                                GRBL/grblHAL: 115200 | RTS/Buildbotics: 230400
+                            </small>
+                        </div>
+
+                        <div className="device-selector" style={{ marginTop: '8px' }}>
+                            <label className="device-label">Flow Control</label>
+                            <select
+                                value={appPreferences?.rtscts ? 'rtscts' : 'none'}
+                                onChange={(e) => {
+                                    const store = useCNCStore.getState();
+                                    store.setAppPreferences({ ...store.appPreferences, rtscts: e.target.value === 'rtscts' });
+                                }}
+                                disabled={connected}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 12px',
+                                    borderRadius: '6px',
+                                    border: '1px solid var(--border-ui)',
+                                    background: 'var(--bg-input)',
+                                    color: 'var(--text-main)',
+                                    fontSize: '13px',
+                                }}
+                            >
+                                <option value="none">None (GRBL/grblHAL)</option>
+                                <option value="rtscts">RTS/CTS Hardware (RTS/Buildbotics)</option>
+                            </select>
+                            <small style={{ color: 'var(--text-dim)', fontSize: '11px', marginTop: '2px', display: 'block' }}>
+                                Enable RTS/CTS for RealtimeCNC RTS-1/RTS-2 boards
+                            </small>
+                        </div>
+
                         {/* Connection Button */}
                         <div className="connection-actions">
                             {!connected ? (
@@ -554,7 +614,7 @@ export default function DevicePanel() {
                             <ul className="help-list">
                                 <li>Make sure your CNC controller is connected via USB</li>
                                 <li>Close other applications using the serial port (UGS, bCNC, etc.)</li>
-                                <li>Supported controllers: GRBL, grblHAL, and compatible</li>
+                                <li>Supported controllers: GRBL, grblHAL, RTS/Buildbotics</li>
                                 <li>For network connections, enter the controller's IP address</li>
                             </ul>
                         </div>
