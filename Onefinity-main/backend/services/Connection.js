@@ -19,6 +19,7 @@ const FIRMWARE_GRBL = 'Grbl';
 const FIRMWARE_GRBLHAL = 'GrblHAL';
 const FIRMWARE_FLUIDNC = 'FluidNC';
 const FIRMWARE_RTS = 'RTS';
+const FIRMWARE_GENERIC = 'Generic'; // [GENERIC MODE] Unknown/proprietary firmware
 
 const FIRMWARE_DETECT_INTERVAL = 1500;
 const FIRMWARE_DETECT_MAX_ATTEMPTS = 6;
@@ -39,7 +40,8 @@ class Connection extends EventEmitter {
         this.baudRate = options.baudRate || 115200;
         this.network = options.network || false;
         this.rtscts = options.rtscts || false;
-        this.defaultFirmware = options.defaultFirmware || FIRMWARE_GRBL;
+        // [GENERIC MODE] Default to Generic instead of Grbl when detection fails
+        this.defaultFirmware = options.defaultFirmware || FIRMWARE_GENERIC;
 
         /** @type {Object.<string, object>} Connected Socket.io clients keyed by socket id */
         this.sockets = {};
@@ -250,6 +252,9 @@ class Connection extends EventEmitter {
         const line = typeof data === 'string' ? data.trim() : String(data).trim();
         if (!line) return;
 
+        // [GENERIC MODE] Log ALL raw serial data at connection level
+        logger.info(`[SERIAL RX] ${this.path}: ${line}`);
+
         this.emit('data', line);
 
         // Feed data to firmware detection if not yet detected
@@ -279,9 +284,9 @@ class Connection extends EventEmitter {
             this._detectAttempts++;
 
             if (this._detectAttempts >= FIRMWARE_DETECT_MAX_ATTEMPTS) {
-                // Timeout - use default firmware
+                // [GENERIC MODE] Timeout — no known firmware detected, use raw serial mode
                 this._stopFirmwareDetection();
-                logger.warn(`Firmware detection timeout on ${this.path}, defaulting to ${this.defaultFirmware}`);
+                logger.warn(`GRBL/RTS startup message not detected on ${this.path} — switching to generic serial mode`);
                 this._setFirmware(this.defaultFirmware);
                 return;
             }
@@ -400,4 +405,5 @@ module.exports = {
     FIRMWARE_GRBLHAL,
     FIRMWARE_FLUIDNC,
     FIRMWARE_RTS,
+    FIRMWARE_GENERIC,
 };

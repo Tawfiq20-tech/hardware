@@ -14,7 +14,7 @@
  */
 const path = require('path');
 const { EventEmitter } = require('events');
-const { Connection, FIRMWARE_GRBL } = require('./Connection');
+const { Connection, FIRMWARE_GRBL, FIRMWARE_GENERIC } = require('./Connection');
 const { SerialConnection } = require('./SerialConnection');
 const { createController } = require('./controllers');
 const { createSessionLogger } = require('./SessionLogger');
@@ -77,6 +77,15 @@ class CNCEngine extends EventEmitter {
             socket.on('command', (portPath, cmd, ...args) => this._handleCommand(socket, portPath, cmd, ...args));
             socket.on('write', (portPath, data, context) => this._handleWrite(socket, portPath, data, context));
             socket.on('writeln', (portPath, data, context) => this._handleWriteln(socket, portPath, data, context));
+
+            // [GENERIC MODE] Raw command passthrough — writes directly to serial port
+            socket.on('command:raw', (cmd) => {
+                if (this.connection && this.connection.isOpen) {
+                    const data = String(cmd).endsWith('\n') ? String(cmd) : String(cmd) + '\n';
+                    logger.info(`[RAW CMD] ${data.trim()}`);
+                    this.connection.write(data);
+                }
+            });
 
             // ─── File Management ─────────────────────────────────
             socket.on('file:load', (data) => this._handleFileLoad(socket, data));
@@ -368,8 +377,9 @@ class CNCEngine extends EventEmitter {
         // Notify all clients
         this.io.emit('controller:type', firmware);
 
-        // Replay buffered data through the controller
-        if (dataBuffer && dataBuffer.length > 0) {
+        // [GENERIC MODE] GenericController has no runner — skip replay
+        // [GRBL ONLY] Replay buffered data through the GRBL runner
+        if (this.controller.runner && dataBuffer && dataBuffer.length > 0) {
             for (const line of dataBuffer) {
                 this.controller.runner.parse(line);
             }

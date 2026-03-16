@@ -4,6 +4,8 @@
  * Supports:
  *   - 'Grbl' / 'FluidNC' -> GrblController (character-counting protocol)
  *   - 'GrblHAL' -> GrblHalController (send-response protocol, extended commands)
+ *   - 'RTS' -> RTSController (Buildbotics/RealtimeCNC protocol)
+ *   - 'Generic' -> GenericController (raw serial passthrough, no protocol)
  *
  * Usage:
  *   const controller = createController('GrblHAL');
@@ -12,7 +14,8 @@
 const { GrblController } = require('../GRBLController');
 const { GrblHalController } = require('./GrblHalController');
 const { RTSController } = require('./RTSController');
-const { FIRMWARE_GRBL, FIRMWARE_GRBLHAL, FIRMWARE_FLUIDNC, FIRMWARE_RTS } = require('../Connection');
+const { GenericController } = require('./GenericController');
+const { FIRMWARE_GRBL, FIRMWARE_GRBLHAL, FIRMWARE_FLUIDNC, FIRMWARE_RTS, FIRMWARE_GENERIC } = require('../Connection');
 
 /**
  * Available controller classes keyed by firmware type.
@@ -22,15 +25,18 @@ const CONTROLLER_CLASSES = {
     [FIRMWARE_GRBLHAL]: GrblHalController,
     [FIRMWARE_FLUIDNC]: GrblController, // FluidNC is grbl-compatible
     [FIRMWARE_RTS]: RTSController,       // RealtimeCNC RTS-1/RTS-2
+    [FIRMWARE_GENERIC]: GenericController, // [GENERIC MODE] Unknown/proprietary firmware
 };
 
 /**
  * Create a controller instance for the given firmware type.
- * @param {string} [firmwareType='Grbl'] - Detected firmware type
- * @returns {GrblController|GrblHalController}
+ * [GENERIC MODE] Falls back to GenericController instead of GrblController
+ * when firmware type is unknown.
+ * @param {string} [firmwareType='Generic'] - Detected firmware type
+ * @returns {GrblController|GrblHalController|RTSController|GenericController}
  */
-function createController(firmwareType = FIRMWARE_GRBL) {
-    const ControllerClass = CONTROLLER_CLASSES[firmwareType] || GrblController;
+function createController(firmwareType = FIRMWARE_GENERIC) {
+    const ControllerClass = CONTROLLER_CLASSES[firmwareType] || GenericController;
     return new ControllerClass(firmwareType);
 }
 
@@ -49,4 +55,5 @@ module.exports = {
     GrblController,
     GrblHalController,
     RTSController,
+    GenericController,
 };
