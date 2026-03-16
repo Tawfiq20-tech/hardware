@@ -125,7 +125,8 @@ export default function DevicePanel() {
             setError(null);
             useCNCStore.getState().setConnectionStatus('connecting');
             const baudRate = appPreferences?.baudRate ?? 115200;
-            await connectToBackendPort(portPath, { baudRate });
+            const rtscts = appPreferences?.rtscts ?? false;
+            await connectToBackendPort(portPath, { baudRate, rtscts });
             useCNCStore.getState().setConnectedPortInfo(
                 selectedPort
                     ? { port: selectedPort.port, manufacturer: selectedPort.manufacturer, vendorId: selectedPort.vendorId, productId: selectedPort.productId }

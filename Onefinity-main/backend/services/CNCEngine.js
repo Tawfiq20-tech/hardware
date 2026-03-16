@@ -295,14 +295,16 @@ class CNCEngine extends EventEmitter {
 
         const baudRate = options.baudRate || 115200;
         const network = options.network || false;
+        const rtscts = options.rtscts || false;
 
-        logger.info(`Opening connection: ${portPath} (baud: ${baudRate}, network: ${network})`);
+        logger.info(`Opening connection: ${portPath} (baud: ${baudRate}, network: ${network}, rtscts: ${rtscts})`);
 
         // Create Connection (Layer 2)
         this.connection = new Connection({
             path: portPath,
             baudRate,
             network,
+            rtscts,
         });
         this.port = portPath;
 

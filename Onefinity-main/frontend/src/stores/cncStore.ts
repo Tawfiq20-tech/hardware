@@ -361,6 +361,7 @@ export const useCNCStore = create<CNCStore>((set) => ({
         reconnectAutomatically: false,
         firmwareFallback: 'grblHAL',
         baudRate: 115200,
+        rtscts: false,
         runCheckOnFileLoad: false,
         outlineStyle: 'Detailed',
     },

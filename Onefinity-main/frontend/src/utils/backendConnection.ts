@@ -85,6 +85,7 @@ export function connectBackendSocket(): Promise<void> {
                             reconnectAutomatically: Boolean(prefs.reconnectAutomatically ?? false),
                             firmwareFallback: (prefs.firmwareFallback as string) ?? 'grblHAL',
                             baudRate: Number(prefs.baudRate) ?? 115200,
+                            rtscts: Boolean(prefs.rtscts ?? false),
                             runCheckOnFileLoad: Boolean(prefs.runCheckOnFileLoad ?? false),
                             outlineStyle: (prefs.outlineStyle as string) ?? 'Detailed',
                         });
@@ -381,6 +382,7 @@ function _wireControllerToStore(): void {
                 reconnectAutomatically: Boolean(prefs.reconnectAutomatically ?? false),
                 firmwareFallback: (prefs.firmwareFallback as string) ?? 'grblHAL',
                 baudRate: Number(prefs.baudRate) ?? 115200,
+                rtscts: Boolean(prefs.rtscts ?? false),
                 runCheckOnFileLoad: Boolean(prefs.runCheckOnFileLoad ?? false),
                 outlineStyle: (prefs.outlineStyle as string) ?? 'Detailed',
             });
@@ -452,16 +454,17 @@ const IPV4_REGEX = /^(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\
 
 export function connectToBackendPort(
     path: string,
-    options: { baudRate?: number; network?: boolean } = {}
+    options: { baudRate?: number; network?: boolean; rtscts?: boolean } = {}
 ): Promise<void> {
     const baudRate = options.baudRate ?? 115200;
     const network = options.network ?? IPV4_REGEX.test(path.trim());
+    const rtscts = options.rtscts ?? false;
     return new Promise((resolve, reject) => {
         if (!controller.socket?.connected) {
             reject(new Error('Not connected to backend. Start the backend server (port 4000) or check the connection.'));
             return;
         }
-        controller.openPort(path, { baudRate, network }, (err: Error | { message?: string } | null) => {
+        controller.openPort(path, { baudRate, network, rtscts }, (err: Error | { message?: string } | null) => {
             if (err) reject(err);
             else resolve();
         });

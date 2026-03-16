@@ -11,7 +11,8 @@
  */
 const { GrblController } = require('../GRBLController');
 const { GrblHalController } = require('./GrblHalController');
-const { FIRMWARE_GRBL, FIRMWARE_GRBLHAL, FIRMWARE_FLUIDNC } = require('../Connection');
+const { RTSController } = require('./RTSController');
+const { FIRMWARE_GRBL, FIRMWARE_GRBLHAL, FIRMWARE_FLUIDNC, FIRMWARE_RTS } = require('../Connection');
 
 /**
  * Available controller classes keyed by firmware type.
@@ -20,6 +21,7 @@ const CONTROLLER_CLASSES = {
     [FIRMWARE_GRBL]: GrblController,
     [FIRMWARE_GRBLHAL]: GrblHalController,
     [FIRMWARE_FLUIDNC]: GrblController, // FluidNC is grbl-compatible
+    [FIRMWARE_RTS]: RTSController,       // RealtimeCNC RTS-1/RTS-2
 };
 
 /**
@@ -46,4 +48,5 @@ module.exports = {
     CONTROLLER_CLASSES,
     GrblController,
     GrblHalController,
+    RTSController,
 };

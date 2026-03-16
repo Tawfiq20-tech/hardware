@@ -18,6 +18,7 @@ const logger = require('../logger');
 const FIRMWARE_GRBL = 'Grbl';
 const FIRMWARE_GRBLHAL = 'GrblHAL';
 const FIRMWARE_FLUIDNC = 'FluidNC';
+const FIRMWARE_RTS = 'RTS';
 
 const FIRMWARE_DETECT_INTERVAL = 800;
 const FIRMWARE_DETECT_MAX_ATTEMPTS = 5;
@@ -37,6 +38,7 @@ class Connection extends EventEmitter {
         this.path = options.path;
         this.baudRate = options.baudRate || 115200;
         this.network = options.network || false;
+        this.rtscts = options.rtscts || false;
         this.defaultFirmware = options.defaultFirmware || FIRMWARE_GRBL;
 
         /** @type {Object.<string, object>} Connected Socket.io clients keyed by socket id */
@@ -82,6 +84,7 @@ class Connection extends EventEmitter {
                 path: this.path,
                 baudRate: this.baudRate,
                 network: this.network,
+                rtscts: this.rtscts,
                 writeFilter: this._writeFilter,
             });
         } catch (err) {
@@ -298,10 +301,12 @@ class Connection extends EventEmitter {
             this.connection.writeImmediate('\x18');
         }
 
-        // Then request build info
+        // Then request build info (GRBL) and dump (RTS/Buildbotics)
         setTimeout(() => {
             if (this.connection && this.connection.isOpen) {
                 this.connection.write('$I\n');
+                // Also send Buildbotics dump command for RTS detection
+                this.connection.write('D\n');
             }
         }, 100);
     }
@@ -313,7 +318,14 @@ class Connection extends EventEmitter {
     _checkFirmware(line) {
         const lower = line.toLowerCase();
 
-        if (lower.includes('grblhal')) {
+        // Check for RTS/Buildbotics JSON protocol
+        if (line.startsWith('{') && (lower.includes('"msgtype"') || lower.includes('"firmware"') || lower.includes('"variables"'))) {
+            this._stopFirmwareDetection();
+            this._setFirmware(FIRMWARE_RTS);
+        } else if (lower.includes('gsd rts') || lower.includes('rts-1') || lower.includes('rts-2')) {
+            this._stopFirmwareDetection();
+            this._setFirmware(FIRMWARE_RTS);
+        } else if (lower.includes('grblhal')) {
             this._stopFirmwareDetection();
             this._setFirmware(FIRMWARE_GRBLHAL);
         } else if (lower.includes('fluidnc')) {
@@ -353,4 +365,5 @@ module.exports = {
     FIRMWARE_GRBL,
     FIRMWARE_GRBLHAL,
     FIRMWARE_FLUIDNC,
+    FIRMWARE_RTS,
 };

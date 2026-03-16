@@ -89,6 +89,7 @@ export interface AppPreferences {
     reconnectAutomatically: boolean;
     firmwareFallback: string;
     baudRate: number;
+    rtscts: boolean;
     runCheckOnFileLoad: boolean;
     outlineStyle: string;
 }

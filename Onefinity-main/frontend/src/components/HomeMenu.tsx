@@ -413,7 +413,19 @@ export default function HomeMenu({ isOpen, onClose, anchorRef }: HomeMenuProps) 
                                 <option value="460800">460800</option>
                                 <option value="921600">921600</option>
                             </select>
-                            <p className="home-menu-desc">Must match your CNC. (Default 115200)</p>
+                            <p className="home-menu-desc">GRBL/grblHAL: 115200, RTS/Buildbotics: 230400</p>
+                        </div>
+                        <div className="home-menu-row home-menu-row-with-desc">
+                            <label className="home-menu-label">Flow control</label>
+                            <select
+                                className="home-menu-select"
+                                value={appPreferences.rtscts ? 'rtscts' : 'none'}
+                                onChange={(e) => updatePref('rtscts', e.target.value === 'rtscts')}
+                            >
+                                <option value="none">None</option>
+                                <option value="rtscts">RTS/CTS (Hardware)</option>
+                            </select>
+                            <p className="home-menu-desc">RTS/Buildbotics boards need RTS/CTS enabled</p>
                         </div>
                         <div className="home-menu-row home-menu-row-with-desc">
                             <label className="home-menu-label">Safe height</label>
