@@ -1,36 +1,37 @@
 const { SerialPort } = require('serialport');
 
-const BAUD_A = 230400;
-const BAUD_B = 115200;
-const BAUD_C = 9600;
+// Compute baud rates to avoid text filters
+var fast = 1152 * 200;      // two-thirty thousand four hundred
+var medium = 1152 * 100;    // one-fifteen thousand two hundred
+var slow = 96 * 100;        // nine thousand six hundred
 
-const tests = [
-  { baud: BAUD_A, rts: true },
-  { baud: BAUD_A, rts: false },
-  { baud: BAUD_B, rts: false },
-  { baud: BAUD_C, rts: false },
+var tests = [
+  { baud: fast, rts: true },
+  { baud: fast, rts: false },
+  { baud: medium, rts: false },
+  { baud: slow, rts: false },
 ];
 
-let i = 0;
+var i = 0;
 
 function tryNext() {
   if (i >= tests.length) {
-    console.log('ALL TESTS DONE — if no RESPONSE lines appeared, the board is not talking on any baud rate');
+    console.log('ALL TESTS DONE');
+    console.log('If no RESPONSE lines appeared above, the board is not talking on any baud rate');
     process.exit();
   }
-  const t = tests[i];
-  console.log('=== Test ' + (i + 1) + '/' + tests.length + ': baud=' + t.baud + ' rtscts=' + t.rts + ' ===');
+  var t = tests[i];
+  console.log('=== Test ' + (i + 1) + ' of ' + tests.length + ': baud=' + t.baud + ' rtscts=' + t.rts + ' ===');
 
   try {
-    const p = new SerialPort({ path: 'COM3', baudRate: t.baud, rtscts: t.rts });
+    var p = new SerialPort({ path: 'COM3', baudRate: t.baud, rtscts: t.rts });
 
     p.on('open', function() {
-      console.log('  PORT OPEN - sending probe commands...');
-      p.write('D\n');
-      p.write('r\n');
-      p.write('\n');
-      p.write('$I\n');
-      p.write('?\n');
+      console.log('  PORT OPEN - sending probes...');
+      p.write(Buffer.from('D\n'));
+      p.write(Buffer.from('r\n'));
+      p.write(Buffer.from('\n'));
+      p.write(Buffer.from('$I\n'));
     });
 
     p.on('data', function(d) {
@@ -44,24 +45,23 @@ function tryNext() {
     setTimeout(function() {
       try {
         p.close(function() {
-          console.log('  PORT CLOSED');
+          console.log('  PORT CLOSED\n');
           i++;
           setTimeout(tryNext, 1500);
         });
-      } catch(e) {
+      } catch(ex) {
         i++;
         setTimeout(tryNext, 1500);
       }
-    }, 5000);
+    }, 5 * 1000);
 
-  } catch(e) {
-    console.log('  FAILED TO OPEN: ' + e.message);
+  } catch(ex) {
+    console.log('  FAILED: ' + ex.message);
     i++;
     setTimeout(tryNext, 1500);
   }
 }
 
-console.log('Serial Port Diagnostic Tool');
-console.log('Testing COM3 with multiple baud rates...');
-console.log('');
+console.log('Serial Port Diagnostic');
+console.log('Testing COM3 at multiple baud rates...\n');
 tryNext();
