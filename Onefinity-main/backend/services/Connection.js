@@ -20,8 +20,8 @@ const FIRMWARE_GRBLHAL = 'GrblHAL';
 const FIRMWARE_FLUIDNC = 'FluidNC';
 const FIRMWARE_RTS = 'RTS';
 
-const FIRMWARE_DETECT_INTERVAL = 800;
-const FIRMWARE_DETECT_MAX_ATTEMPTS = 5;
+const FIRMWARE_DETECT_INTERVAL = 1500;
+const FIRMWARE_DETECT_MAX_ATTEMPTS = 6;
 
 class Connection extends EventEmitter {
     /**
@@ -230,6 +230,7 @@ class Connection extends EventEmitter {
         logger.info(`Connection opened: ${this.path} (${this.network ? 'network' : 'serial'})`);
 
         // Begin firmware detection
+        logger.info(`Connection ready on ${this.path} — baudRate: ${this.baudRate}, rtscts: ${this.rtscts}, network: ${this.network}`);
         this._startFirmwareDetection();
     }
 
@@ -296,19 +297,45 @@ class Connection extends EventEmitter {
     _sendFirmwareProbe() {
         if (!this.connection || !this.connection.isOpen) return;
 
-        // Send soft reset first (Ctrl-X) to trigger startup message
-        if (this._detectAttempts > 0) {
-            this.connection.writeImmediate('\x18');
-        }
+        const attempt = this._detectAttempts;
 
-        // Then request build info (GRBL) and dump (RTS/Buildbotics)
-        setTimeout(() => {
-            if (this.connection && this.connection.isOpen) {
-                this.connection.write('$I\n');
-                // Also send Buildbotics dump command for RTS detection
-                this.connection.write('D\n');
-            }
-        }, 100);
+        if (attempt === 0) {
+            // First attempt: wait for board to boot, then send both probes
+            // RTS/Buildbotics boards need time after port opens
+            setTimeout(() => {
+                if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
+                    // Send Buildbotics dump command first (single char, most likely to get a response)
+                    this.connection.write('D\n');
+                }
+            }, 300);
+            setTimeout(() => {
+                if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
+                    // Then GRBL build info
+                    this.connection.write('$I\n');
+                }
+            }, 600);
+        } else if (attempt <= 2) {
+            // Attempts 1-2: Try Buildbotics commands (report, help)
+            this.connection.write('D\n');
+            setTimeout(() => {
+                if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
+                    this.connection.write('r\n'); // Buildbotics report command
+                }
+            }, 200);
+        } else if (attempt <= 4) {
+            // Attempts 3-4: Try GRBL approach with soft reset
+            this.connection.writeImmediate('\x18');
+            setTimeout(() => {
+                if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
+                    this.connection.write('$I\n');
+                    this.connection.write('\n'); // Empty line to trigger any banner
+                }
+            }, 200);
+        } else {
+            // Last attempt: send newlines to trigger any welcome message
+            this.connection.write('\n');
+            this.connection.write('\n');
+        }
     }
 
     /**
@@ -318,11 +345,18 @@ class Connection extends EventEmitter {
     _checkFirmware(line) {
         const lower = line.toLowerCase();
 
+        // Log every line received during detection for debugging
+        logger.info(`Firmware probe response on ${this.path}: ${line.substring(0, 200)}`);
+
         // Check for RTS/Buildbotics JSON protocol
         if (line.startsWith('{') && (lower.includes('"msgtype"') || lower.includes('"firmware"') || lower.includes('"variables"'))) {
             this._stopFirmwareDetection();
             this._setFirmware(FIRMWARE_RTS);
-        } else if (lower.includes('gsd rts') || lower.includes('rts-1') || lower.includes('rts-2')) {
+        } else if (line.startsWith('{') && (lower.includes('"parameter"') || lower.includes('"value"') || lower.includes('"state"'))) {
+            // Additional Buildbotics JSON patterns
+            this._stopFirmwareDetection();
+            this._setFirmware(FIRMWARE_RTS);
+        } else if (lower.includes('buildbotics') || lower.includes('gsd rts') || lower.includes('rts-1') || lower.includes('rts-2') || lower.includes('realtimecnc')) {
             this._stopFirmwareDetection();
             this._setFirmware(FIRMWARE_RTS);
         } else if (lower.includes('grblhal')) {
