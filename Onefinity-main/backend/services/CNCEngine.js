@@ -14,7 +14,7 @@
  */
 const path = require('path');
 const { EventEmitter } = require('events');
-const { Connection, FIRMWARE_GRBL, FIRMWARE_GENERIC } = require('./Connection');
+const { Connection, FIRMWARE_GRBL, FIRMWARE_RTS, FIRMWARE_GENERIC } = require('./Connection');
 const { SerialConnection } = require('./SerialConnection');
 const { createController } = require('./controllers');
 const { createSessionLogger } = require('./SessionLogger');
@@ -227,22 +227,31 @@ class CNCEngine extends EventEmitter {
             });
 
             // Send current controller state
-            socket.emit('controller:state', this.controller.type, {
-                status: this.controller.state.status,
-                parserstate: this.controller.state.parserstate,
-            });
+            const controllerState = {
+                status: this.controller.state?.status || {},
+                parserstate: this.controller.state?.parserstate || {},
+            };
+            socket.emit('controller:state', this.controller.type, controllerState);
 
-            // Send workflow state
-            socket.emit('workflow:state', this.controller.getWorkflowState());
+            // Send workflow state (all controllers implement this)
+            if (typeof this.controller.getWorkflowState === 'function') {
+                socket.emit('workflow:state', this.controller.getWorkflowState());
+            }
 
             // Send sender status
-            socket.emit('sender:status', this.controller.getSenderStatus());
+            if (typeof this.controller.getSenderStatus === 'function') {
+                socket.emit('sender:status', this.controller.getSenderStatus());
+            }
 
             // Send feeder status
-            socket.emit('feeder:status', this.controller.getFeederStatus());
+            if (typeof this.controller.getFeederStatus === 'function') {
+                socket.emit('feeder:status', this.controller.getFeederStatus());
+            }
 
             // Send tool changer status
-            socket.emit('toolchanger:status', this.controller.getToolChangerStatus());
+            if (typeof this.controller.getToolChangerStatus === 'function') {
+                socket.emit('toolchanger:status', this.controller.getToolChangerStatus());
+            }
 
             // Send loaded file info
             if (this.loadedFile) {
@@ -365,6 +374,65 @@ class CNCEngine extends EventEmitter {
     _onFirmwareDetected(firmware, dataBuffer) {
         logger.info(`Firmware detected: ${firmware}`);
 
+        // For RTS firmware, switch the connection to rawMode if not already
+        if (firmware === FIRMWARE_RTS && this.connection && !this.connection.rawMode) {
+            logger.info('RTS firmware detected - reopening connection in raw binary mode');
+            const connPath = this.connection.path;
+            const connBaudRate = this.connection.baudRate;
+            const connNetwork = this.connection.network;
+            const connRtscts = this.connection.rtscts;
+            const sockets = { ...this.connection.sockets };
+
+            // Close existing connection
+            this.connection.close();
+
+            // Reopen in raw mode
+            this.connection = new Connection({
+                path: connPath,
+                baudRate: connBaudRate,
+                network: connNetwork,
+                rtscts: connRtscts,
+                rawMode: true,
+            });
+
+            // Re-register sockets
+            for (const socket of Object.values(sockets)) {
+                this.connection.addConnection(socket);
+            }
+
+            // Re-wire connection events
+            this.connection.on('error', (err) => {
+                logger.error(`Connection error: ${err?.message}`);
+                this.io.emit('serialport:error', { port: connPath, error: err?.message });
+            });
+            this.connection.on('close', () => {
+                this._onConnectionClose();
+            });
+
+            // Mark firmware as already detected so we don't re-detect
+            this.connection.firmwareDetected = true;
+            this.connection.controllerType = firmware;
+
+            // Open the raw connection
+            this.connection.open((err) => {
+                if (err) {
+                    logger.error(`Failed to reopen in raw mode: ${err.message}`);
+                    return;
+                }
+
+                // Create and bind controller
+                this.controller = createController(firmware);
+                this.controller.bind(this.connection);
+                this._wireControllerEvents();
+                this.io.emit('controller:type', firmware);
+
+                if (this.sessionLogger) {
+                    this.sessionLogger.logConnection(true, `Firmware: ${firmware} (raw binary mode)`);
+                }
+            });
+            return;
+        }
+
         // Create the appropriate controller
         this.controller = createController(firmware);
 
@@ -378,8 +446,9 @@ class CNCEngine extends EventEmitter {
         this.io.emit('controller:type', firmware);
 
         // [GENERIC MODE] GenericController has no runner — skip replay
+        // [RTS] RTSController has no runner — skip replay
         // [GRBL ONLY] Replay buffered data through the GRBL runner
-        if (this.controller.runner && dataBuffer && dataBuffer.length > 0) {
+        if (this.controller.runner && typeof this.controller.runner.parse === 'function' && dataBuffer && dataBuffer.length > 0) {
             for (const line of dataBuffer) {
                 this.controller.runner.parse(line);
             }
@@ -655,9 +724,10 @@ class CNCEngine extends EventEmitter {
         this.controller.command('gcode:load', fileName, gcodeContent);
 
         // Store file info for reconnecting clients
+        const senderTotal = this.controller.sender?.total || gcodeContent.split('\n').filter(l => l.trim()).length;
         this.loadedFile = {
             name: fileName,
-            total: this.controller.sender.total,
+            total: senderTotal,
             size: gcodeContent.length,
             isRotary: isRotaryFile(gcodeContent),
         };
@@ -683,20 +753,21 @@ class CNCEngine extends EventEmitter {
      * Get current engine state for REST API.
      */
     getState() {
+        const ctrl = this.controller;
         return {
             connected: this.connection != null && this.connection.isOpen,
             port: this.port,
             controllerType: this.connection?.controllerType || null,
-            machineState: this.controller?.getMappedState() || 'idle',
-            activeState: this.controller?.getState() || 'Idle',
-            position: this.controller?.getPosition() || { x: 0, y: 0, z: 0 },
-            machinePosition: this.controller?.getMachinePosition() || { x: 0, y: 0, z: 0 },
-            workflowState: this.controller?.getWorkflowState() || 'idle',
-            senderStatus: this.controller?.getSenderStatus() || null,
-            feederStatus: this.controller?.getFeederStatus() || null,
-            overrides: this.controller?.getOverrides() || { feed: 100, rapid: 100, spindle: 100 },
-            toolChanger: this.controller?.getToolChangerStatus() || null,
-            health: this.controller?.getHealthMetrics() || null,
+            machineState: (typeof ctrl?.getMappedState === 'function') ? ctrl.getMappedState() : 'idle',
+            activeState: (typeof ctrl?.getState === 'function') ? ctrl.getState() : 'Idle',
+            position: (typeof ctrl?.getPosition === 'function') ? ctrl.getPosition() : { x: 0, y: 0, z: 0 },
+            machinePosition: (typeof ctrl?.getMachinePosition === 'function') ? ctrl.getMachinePosition() : { x: 0, y: 0, z: 0 },
+            workflowState: (typeof ctrl?.getWorkflowState === 'function') ? ctrl.getWorkflowState() : 'idle',
+            senderStatus: (typeof ctrl?.getSenderStatus === 'function') ? ctrl.getSenderStatus() : null,
+            feederStatus: (typeof ctrl?.getFeederStatus === 'function') ? ctrl.getFeederStatus() : null,
+            overrides: (typeof ctrl?.getOverrides === 'function') ? ctrl.getOverrides() : { feed: 100, rapid: 100, spindle: 100 },
+            toolChanger: (typeof ctrl?.getToolChangerStatus === 'function') ? ctrl.getToolChangerStatus() : null,
+            health: (typeof ctrl?.getHealthMetrics === 'function') ? ctrl.getHealthMetrics() : null,
             loadedFile: this.loadedFile,
         };
     }

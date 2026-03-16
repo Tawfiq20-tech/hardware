@@ -40,6 +40,7 @@ class Connection extends EventEmitter {
         this.baudRate = options.baudRate || 115200;
         this.network = options.network || false;
         this.rtscts = options.rtscts || false;
+        this.rawMode = options.rawMode || false;
         // [GENERIC MODE] Default to Generic instead of Grbl when detection fails
         this.defaultFirmware = options.defaultFirmware || FIRMWARE_GENERIC;
 
@@ -66,6 +67,9 @@ class Connection extends EventEmitter {
         this._detectAttempts = 0;
         this._dataBuffer = [];
 
+        /** @type {Buffer} Raw binary buffer for firmware detection */
+        this._rawBuffer = Buffer.alloc(0);
+
         // Write filter
         this._writeFilter = options.writeFilter || null;
     }
@@ -87,6 +91,7 @@ class Connection extends EventEmitter {
                 baudRate: this.baudRate,
                 network: this.network,
                 rtscts: this.rtscts,
+                rawMode: this.rawMode,
                 writeFilter: this._writeFilter,
             });
         } catch (err) {
@@ -95,7 +100,12 @@ class Connection extends EventEmitter {
         }
 
         // Wire up serial events
-        this.connection.on('data', (data) => this._onData(data));
+        if (this.rawMode) {
+            // Raw mode: receive raw Buffers for binary protocol detection
+            this.connection.on('data', (data) => this._onRawData(data));
+        } else {
+            this.connection.on('data', (data) => this._onData(data));
+        }
         this.connection.on('open', () => this._onOpen());
         this.connection.on('close', (err) => this._onClose(err));
         this.connection.on('error', (err) => this._onError(err));
@@ -202,6 +212,17 @@ class Connection extends EventEmitter {
     }
 
     /**
+     * Write raw binary data (Buffer) directly to the port.
+     * Used by RTSController for binary protocol frames.
+     * @param {Buffer} data - Raw binary data to send
+     */
+    writeRaw(data) {
+        if (!this.connection || !this.connection.isOpen) return;
+        this.connection.writeImmediate(data);
+        this.emit('write', data);
+    }
+
+    /**
      * Broadcast an event to all connected Socket.io clients.
      * @param {string} eventName
      * @param {...*} args
@@ -264,6 +285,64 @@ class Connection extends EventEmitter {
         }
     }
 
+    /**
+     * Handle raw binary data from serial port (rawMode).
+     * Buffers bytes and scans for RTS binary frames or text lines.
+     * @param {Buffer} data
+     */
+    _onRawData(data) {
+        const buf = Buffer.isBuffer(data) ? data : Buffer.from(data);
+
+        logger.info(`[SERIAL RX RAW] ${this.path}: ${buf.length} bytes | ${buf.toString('hex')}`);
+
+        // Emit raw data for controllers that want binary access
+        this.emit('rawData', buf);
+
+        // Also try to emit text lines for firmware detection compatibility
+        this._rawBuffer = Buffer.concat([this._rawBuffer, buf]);
+
+        // Check for binary RTS frames during firmware detection
+        if (!this.firmwareDetected) {
+            this._checkBinaryFirmware();
+        }
+    }
+
+    /**
+     * Check raw binary buffer for RTS protocol frames.
+     * Looks for the idle frame 01 05 C1 00 FF or any valid RTS frame.
+     */
+    _checkBinaryFirmware() {
+        const buf = this._rawBuffer;
+
+        for (let i = 0; i < buf.length; i++) {
+            if (buf[i] !== 0x01) continue;
+
+            // Need at least 2 bytes for start + length
+            if (i + 1 >= buf.length) break;
+
+            const frameLen = buf[i + 1];
+            if (frameLen < 3 || frameLen > 250) continue;
+
+            // Check if we have the complete frame
+            if (i + frameLen > buf.length) break;
+
+            // Check end byte
+            if (buf[i + frameLen - 1] !== 0xFF) continue;
+
+            // Valid frame found - check if it's a known RTS frame
+            const cmdByte = buf[i + 2];
+
+            // C1 = machine state (idle message), B0 = status, A0 = JSON, 01 = firmware
+            if (cmdByte === 0xC1 || cmdByte === 0xB0 || cmdByte === 0xA0 || cmdByte === 0x01) {
+                const frameHex = buf.slice(i, i + frameLen).toString('hex');
+                logger.info(`[RTS BINARY] Detected RTS frame on ${this.path}: ${frameHex}`);
+                this._stopFirmwareDetection();
+                this._setFirmware(FIRMWARE_RTS);
+                return;
+            }
+        }
+    }
+
     // ─── Firmware Detection ──────────────────────────────────────────
 
     /**
@@ -303,6 +382,38 @@ class Connection extends EventEmitter {
         if (!this.connection || !this.connection.isOpen) return;
 
         const attempt = this._detectAttempts;
+
+        if (this.rawMode) {
+            // In raw mode, try binary RTS protocol probes
+            if (attempt === 0) {
+                // Wait for board's unsolicited idle message (01 05 C1 00 FF)
+                // The board typically sends this on connect within ~500ms
+                setTimeout(() => {
+                    if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
+                        // Send register 0x09 query (machine config)
+                        const probe = Buffer.from([0x01, 0x05, 0x00, 0x09, 0xFF]);
+                        this.connection.writeImmediate(probe);
+                    }
+                }, 300);
+                setTimeout(() => {
+                    if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
+                        // Also try GRBL $I (works on RTS boards too)
+                        this.connection.writeImmediate(Buffer.from('$I\n'));
+                    }
+                }, 600);
+            } else if (attempt <= 2) {
+                // Send firmware version query
+                const probe = Buffer.from([0x01, 0x05, 0x00, 0x01, 0xFF]);
+                this.connection.writeImmediate(probe);
+            } else if (attempt <= 4) {
+                // Try text-based probes as fallback
+                this.connection.writeImmediate(Buffer.from('$I\n'));
+                this.connection.writeImmediate(Buffer.from('\x18')); // soft reset
+            } else {
+                this.connection.writeImmediate(Buffer.from('\n'));
+            }
+            return;
+        }
 
         if (attempt === 0) {
             // First attempt: wait for board to boot, then send both probes

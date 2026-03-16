@@ -78,7 +78,12 @@ class SerialConnection extends EventEmitter {
     constructor(options = {}) {
         super();
 
-        const { writeFilter, ...rest } = options;
+        const { writeFilter, rawMode, ...rest } = options;
+
+        /**
+         * @type {boolean} When true, emit raw Buffer data instead of parsed lines
+         */
+        this.rawMode = rawMode || false;
 
         // Validate and set write filter
         if (writeFilter) {
@@ -301,7 +306,7 @@ class SerialConnection extends EventEmitter {
     }
 
     /**
-     * Attach event listeners and pipe through ReadlineParser.
+     * Attach event listeners and pipe through ReadlineParser (or raw mode).
      * @private
      */
     _addPortListeners() {
@@ -309,9 +314,18 @@ class SerialConnection extends EventEmitter {
         this.port.on('close', this._eventListeners.close);
         this.port.on('error', this._eventListeners.error);
 
-        // Pipe through ReadlineParser for line-based data events
-        this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\n' }));
-        this.parser.on('data', this._eventListeners.data);
+        if (this.rawMode) {
+            // Raw mode: emit raw Buffer data directly, no parsing
+            this.parser = null;
+            this.port.on('data', (buf) => {
+                this.emit('rawData', buf);
+                this.emit('data', buf);
+            });
+        } else {
+            // Pipe through ReadlineParser for line-based data events
+            this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\n' }));
+            this.parser.on('data', this._eventListeners.data);
+        }
     }
 
     /**
