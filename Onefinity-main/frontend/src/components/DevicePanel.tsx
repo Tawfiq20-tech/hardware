@@ -40,6 +40,13 @@ export default function DevicePanel() {
     const [ipAddress, setIpAddress] = useState(() =>
         (useCNCStore.getState().ethernet?.connectToIP ?? '').trim()
     );
+    // Local state for baud rate and flow control — avoids store sync bugs
+    const [localBaudRate, setLocalBaudRate] = useState<number>(() =>
+        useCNCStore.getState().appPreferences?.baudRate ?? 115200
+    );
+    const [localRtscts, setLocalRtscts] = useState<boolean>(() =>
+        useCNCStore.getState().appPreferences?.rtscts ?? false
+    );
 
     // Joystick state
     const [joystickManager] = useState(() => new JoystickManager());
@@ -124,9 +131,9 @@ export default function DevicePanel() {
         try {
             setError(null);
             useCNCStore.getState().setConnectionStatus('connecting');
-            const baudRate = appPreferences?.baudRate ?? 115200;
-            const rtscts = appPreferences?.rtscts ?? false;
-            await connectToBackendPort(portPath, { baudRate, rtscts });
+            // Use local state directly — not the store (avoids hydration override bug)
+            console.log(`[DevicePanel] Connecting: ${portPath}, baudRate=${localBaudRate}, rtscts=${localRtscts}`);
+            await connectToBackendPort(portPath, { baudRate: localBaudRate, rtscts: localRtscts });
             useCNCStore.getState().setConnectedPortInfo(
                 selectedPort
                     ? { port: selectedPort.port, manufacturer: selectedPort.manufacturer, vendorId: selectedPort.vendorId, productId: selectedPort.productId }
@@ -394,10 +401,12 @@ export default function DevicePanel() {
                         <div className="device-selector" style={{ marginTop: '8px' }}>
                             <label className="device-label">Baud Rate</label>
                             <select
-                                value={appPreferences?.baudRate ?? 115200}
+                                value={localBaudRate}
                                 onChange={(e) => {
+                                    const val = Number(e.target.value);
+                                    setLocalBaudRate(val);
                                     const store = useCNCStore.getState();
-                                    store.setAppPreferences({ ...store.appPreferences, baudRate: Number(e.target.value) });
+                                    store.setAppPreferences({ ...store.appPreferences, baudRate: val });
                                 }}
                                 disabled={connected}
                                 style={{
@@ -426,10 +435,12 @@ export default function DevicePanel() {
                         <div className="device-selector" style={{ marginTop: '8px' }}>
                             <label className="device-label">Flow Control</label>
                             <select
-                                value={appPreferences?.rtscts ? 'rtscts' : 'none'}
+                                value={localRtscts ? 'rtscts' : 'none'}
                                 onChange={(e) => {
+                                    const val = e.target.value === 'rtscts';
+                                    setLocalRtscts(val);
                                     const store = useCNCStore.getState();
-                                    store.setAppPreferences({ ...store.appPreferences, rtscts: e.target.value === 'rtscts' });
+                                    store.setAppPreferences({ ...store.appPreferences, rtscts: val });
                                 }}
                                 disabled={connected}
                                 style={{
@@ -532,7 +543,7 @@ export default function DevicePanel() {
                                 )}
                                 <div className="info-row">
                                     <span className="info-label">Baud Rate:</span>
-                                    <span className="info-value">{appPreferences?.baudRate ?? 115200}</span>
+                                    <span className="info-value">{localBaudRate}</span>
                                 </div>
                             </div>
                         )}
