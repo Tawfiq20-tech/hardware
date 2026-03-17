@@ -1052,64 +1052,29 @@ class RTSController extends EventEmitter {
         // Cancel any active jog
         this._cancelActiveJog();
 
-        // Record start position for distance monitoring
-        this._jogTarget = {
-            startX: this._mpos.x,
-            startY: this._mpos.y,
-            startZ: this._mpos.z,
-            startA: this._mpos.a,
-            distX: Math.abs(x),
-            distY: Math.abs(y),
-            distZ: Math.abs(z),
-            distA: Math.abs(a),
-        };
+        // Use G-code incremental move for exact step size
+        // G91 = relative mode, G1 = linear move at feedRate
+        const axes = [];
+        if (x !== 0) axes.push(`X${x}`);
+        if (y !== 0) axes.push(`Y${y}`);
+        if (z !== 0) axes.push(`Z${z}`);
+        if (a !== 0) axes.push(`A${a}`);
 
-        // Firmware-mapped velocity scaling
-        // Scale feedRate relative to each axis's max velocity from firmware config
-        const maxVel = this._firmwareConfig.max_velocity;
-        const computeVel = (dist, axisIdx) => {
-            if (dist === 0) return 0;
-            // Scale: feedRate / max_velocity * 254 (RTS internal unit)
-            // Clamp to reasonable range for safety
-            const axisMax = maxVel[axisIdx] || 15240;
-            const scaled = (feedRate / axisMax) * 254;
-            // For small steps (< 1mm), use lower velocity for accuracy
-            const distFactor = Math.abs(dist) < 1 ? Math.max(0.3, Math.abs(dist)) : 1;
-            const vel = Math.max(1, Math.min(scaled * distFactor, 500));
-            return Math.sign(dist) * vel;
-        };
+        const cmd = `G91 G1 ${axes.join(' ')} F${feedRate}`;
+        logger.info(`[RTS] Jog step: ${cmd}`);
 
-        let vx = computeVel(x, 0);
-        let vy = computeVel(y, 1);
-        let vz = computeVel(z, 2);
-        let va = computeVel(a, 3);
+        this._writeAscii(cmd + '\n');
 
-        // Apply axis inversion from firmware config — the firmware's inverted
-        // flags indicate motor direction is reversed, so jog velocity signs
-        // must be flipped to match the UI convention (Y- = move toward user)
-        const inv = this._firmwareConfig.inverted;
-        if (inv[0]) vx = -vx;
-        if (inv[1]) vy = -vy;
-        if (inv[2]) vz = -vz;
-        if (inv[3]) va = -va;
-
-        logger.info(`[RTS] Jog start: x=${x} y=${y} z=${z} feedRate=${feedRate} vel=[${vx.toFixed(1)},${vy.toFixed(1)},${vz.toFixed(1)},${va.toFixed(1)}] inv=[${inv}]`);
-
-        // Send velocity jog
-        this._sendJogFrame(vx, vy, vz, va);
-
-        // Safety timeout: scale with distance (min 2s, max 10s)
-        const maxDist = Math.max(Math.abs(x), Math.abs(y), Math.abs(z), Math.abs(a));
-        const timeout = Math.max(2000, Math.min(maxDist * 100 + 2000, 10000));
+        // Return to absolute mode after a short delay
         this._jogStopTimer = setTimeout(() => {
-            this._cancelActiveJog();
-            logger.warn('[RTS] Jog safety timeout - stopping');
-        }, timeout);
+            this._writeAscii('G90\n');
+        }, 200);
     }
 
     /**
      * Check if active jog has reached target distance.
      * Called from _handleStatusFrame on each B0 position update (10Hz).
+     * (Kept for continuous jog support, not needed for step jog)
      */
     _checkJogTarget() {
         if (!this._jogTarget) return;
@@ -1120,7 +1085,6 @@ class RTSController extends EventEmitter {
         const movedZ = Math.abs(this._mpos.z - t.startZ);
         const movedA = Math.abs(this._mpos.a - t.startA);
 
-        // Check if all requested axes have reached their target
         const xDone = t.distX === 0 || movedX >= t.distX;
         const yDone = t.distY === 0 || movedY >= t.distY;
         const zDone = t.distZ === 0 || movedZ >= t.distZ;
@@ -1147,11 +1111,13 @@ class RTSController extends EventEmitter {
     }
 
     /**
-     * Cancel active jog (send zero velocity jog).
+     * Cancel active jog (send zero velocity jog + feed hold).
      */
     _jogCancel() {
         this._cancelActiveJog();
         this._sendJogFrame(0, 0, 0, 0);
+        // Also send feed hold to stop any in-progress G1 move
+        this._writeAscii('!\n');
     }
 
     /**
@@ -1163,7 +1129,8 @@ class RTSController extends EventEmitter {
         this._homing = true;
         this._homingAxis = null;
         // Buildbotics-derived firmware uses G28.2 for homing, NOT GRBL $H
-        this._sendGcode('G28.2 X0 Y0 Z0');
+        // Send as raw ASCII to avoid _sendGcode routing issues
+        this._writeAscii('G28.2 X0 Y0 Z0\n');
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
@@ -1197,7 +1164,7 @@ class RTSController extends EventEmitter {
         this._homing = true;
         this._homingAxis = axisUpper;
         // Buildbotics-derived firmware uses G28.2 for homing, NOT GRBL $H/$HX
-        this._sendGcode(`G28.2 ${axisUpper}0`);
+        this._writeAscii(`G28.2 ${axisUpper}0\n`);
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
