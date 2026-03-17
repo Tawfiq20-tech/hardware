@@ -96,6 +96,9 @@ class RTSController extends EventEmitter {
         /** @type {NodeJS.Timeout|null} Init timeout timer */
         this._initTimer = null;
 
+        /** @type {NodeJS.Timeout|null} Jog stop timer for step jogs */
+        this._jogStopTimer = null;
+
         /** @type {boolean} Whether we received the initial idle message */
         this._gotIdleMsg = false;
 
@@ -230,6 +233,10 @@ class RTSController extends EventEmitter {
     unbind() {
         this._stopPolling();
         this._clearInitTimer();
+        if (this._jogStopTimer) {
+            clearTimeout(this._jogStopTimer);
+            this._jogStopTimer = null;
+        }
 
         if (this.connection) {
             this.connection.removeAllListeners('rawData');
@@ -931,9 +938,13 @@ class RTSController extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * Send a jog command using GRBL $J incremental jog.
+     * Send a jog command using the binary velocity jog protocol.
      * The frontend sends distance-based params (e.g. x=1 means move 1mm).
-     * We use $J=G91G21 for precise step jogs instead of velocity frames.
+     * We convert to a velocity pulse: send velocity, wait for distance, send stop.
+     *
+     * Velocity = feedRate (mm/min) converted to the RTS velocity scale.
+     * Duration = distance / velocity.
+     *
      * @param {object} params - {x, y, z, a, feedRate}
      */
     _jog(params = {}) {
@@ -941,22 +952,55 @@ class RTSController extends EventEmitter {
 
         if (x === 0 && y === 0 && z === 0 && a === 0) return;
 
-        // Build $J jog command (incremental, metric)
-        let cmd = '$J=G91G21';
-        if (x !== 0) cmd += `X${x}`;
-        if (y !== 0) cmd += `Y${y}`;
-        if (z !== 0) cmd += `Z${z}`;
-        if (a !== 0) cmd += `A${a}`;
-        cmd += `F${feedRate}`;
+        // Cancel any pending jog stop timer
+        if (this._jogStopTimer) {
+            clearTimeout(this._jogStopTimer);
+            this._jogStopTimer = null;
+        }
 
-        logger.info(`[RTS] Jog: ${cmd}`);
-        this._writeAscii(cmd + '\n');
+        // Calculate the max distance requested across axes
+        const maxDist = Math.max(Math.abs(x), Math.abs(y), Math.abs(z), Math.abs(a));
+        if (maxDist === 0) return;
+
+        // Jog velocity in mm/min (feedRate), convert to mm/s
+        const velocityMmPerSec = feedRate / 60;
+
+        // Duration to hold the jog (seconds) = distance / velocity
+        const durationSec = maxDist / velocityMmPerSec;
+        const durationMs = Math.max(20, Math.min(durationSec * 1000, 10000));
+
+        // RTS velocity scale: the float values represent velocity in the board's
+        // internal units. From captures, values around 50-200 are typical speeds.
+        // Scale: feedRate mm/min maps to velocity value
+        const scale = feedRate / 60; // mm/s as the velocity value
+
+        // Direction vectors (normalized to -1/+1, scaled by velocity)
+        const vx = x !== 0 ? Math.sign(x) * scale : 0;
+        const vy = y !== 0 ? Math.sign(y) * scale : 0;
+        const vz = z !== 0 ? Math.sign(z) * scale : 0;
+        const va = a !== 0 ? Math.sign(a) * scale : 0;
+
+        logger.info(`[RTS] Jog: dist=${maxDist}mm vel=${scale}mm/s dur=${durationMs.toFixed(0)}ms vx=${vx} vy=${vy} vz=${vz}`);
+
+        // Send velocity jog frame
+        this._sendJogFrame(vx, vy, vz, va);
+
+        // Schedule stop after calculated duration
+        this._jogStopTimer = setTimeout(() => {
+            this._jogStopTimer = null;
+            this._sendJogFrame(0, 0, 0, 0);
+            logger.info('[RTS] Jog stop sent');
+        }, durationMs);
     }
 
     /**
      * Cancel active jog (send zero velocity jog).
      */
     _jogCancel() {
+        if (this._jogStopTimer) {
+            clearTimeout(this._jogStopTimer);
+            this._jogStopTimer = null;
+        }
         this._sendJogFrame(0, 0, 0, 0);
     }
 
