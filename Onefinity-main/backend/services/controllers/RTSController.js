@@ -270,6 +270,8 @@ class RTSController extends EventEmitter {
         });
 
         connection.on('close', () => {
+            const stack = new Error().stack;
+            logger.error(`[RTS] Connection CLOSED — stack: ${stack}`);
             this._activeState = 'Alarm';
             this._stopPolling();
             this._clearInitTimer();
@@ -286,7 +288,7 @@ class RTSController extends EventEmitter {
         });
 
         connection.on('error', (err) => {
-            logger.error('RTS connection error', { message: err?.message });
+            logger.error(`[RTS] Connection ERROR: ${err?.message} — stack: ${err?.stack}`);
             this.emit('error', { message: err?.message });
         });
 
@@ -390,6 +392,9 @@ class RTSController extends EventEmitter {
         this.emit('state', this.getState());
         this.emit('status', this.state.status);
 
+        // Push machine config to board (RTS-X does this at startup)
+        this._pushMachineConfig();
+
         // Start 10Hz status polling
         this._startPolling();
 
@@ -402,6 +407,61 @@ class RTSController extends EventEmitter {
             clearTimeout(this._initTimer);
             this._initTimer = null;
         }
+    }
+
+    /**
+     * Push machine config to the board via SET commands (register 0x82).
+     * The RTS-X software does this at startup before any jog/home commands.
+     * Without it, the board may not accept motion commands properly.
+     */
+    _pushMachineConfig() {
+        const cfg = this._firmwareConfig;
+        logger.info('[RTS] Pushing machine config to board (matching RTS-X startup)');
+
+        // Inverted flags (uint32, not float)
+        for (let i = 0; i < 4; i++) {
+            this._sendWriteRegister(WREG_INVERTED, i, cfg.inverted[i] ? 1 : 0, false);
+        }
+        // Steps per mm
+        for (let i = 0; i < 4; i++) {
+            this._sendWriteRegister(WREG_STEPS_PER_MM, i, cfg.steps_per_mm[i]);
+        }
+        // Max velocity
+        for (let i = 0; i < 4; i++) {
+            this._sendWriteRegister(WREG_MAX_VELOCITY, i, cfg.max_velocity[i]);
+        }
+        // Acceleration
+        for (let i = 0; i < 4; i++) {
+            this._sendWriteRegister(WREG_ACCEL, i, cfg.accel[i]);
+        }
+        // Travel limits
+        for (let i = 0; i < 4; i++) {
+            this._sendWriteRegister(WREG_HOME_OFFSET, i, 0); // Home offset = 0
+        }
+        // Max travel (stored as register 0x0A in RTS-X)
+        for (let i = 0; i < 4; i++) {
+            this._sendWriteRegister(WREG_JERK, i, cfg.max_travel[i]);
+        }
+        // Min travel (register 0x0D)
+        for (let i = 0; i < 4; i++) {
+            this._sendWriteRegister(WREG_MIN_LIMIT, i, cfg.min_travel[i]);
+        }
+        // Probe settings
+        this._sendWriteRegister(WREG_PROBE_SPEED, 0, 1000);
+        this._sendWriteRegister(WREG_PROBE_X, 0, 54);
+        this._sendWriteRegister(WREG_PROBE_Y, 0, 54);
+        this._sendWriteRegister(WREG_PROBE_Z, 0, 15);
+        // Spindle defaults
+        this._sendWriteRegister(WREG_SPINDLE_MODE, 0, 0, false);
+
+        // Send G54 and G21 (metric) like RTS-X does
+        setTimeout(() => {
+            if (this.connection) {
+                this._sendGcodeMode('G54');
+                this._sendGcodeMode('G21');
+                logger.info('[RTS] Machine config push complete');
+            }
+        }, 500);
     }
 
     // ═══════════════════════════════════════════════════════════════════════
