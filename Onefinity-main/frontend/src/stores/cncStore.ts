@@ -15,7 +15,7 @@ import type {
     AppPreferences,
 } from '../types/cnc';
 import { getTimestamp } from '../utils/formatters';
-import { jogDistanceStorage, coordSystemStorage } from '../utils/localStorage';
+import { jogDistanceStorage, jogSpeedStorage, coordSystemStorage } from '../utils/localStorage';
 
 export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error';
 export type CoordSystem = 'Z' | 'XYZ' | 'XY' | 'X' | 'Y';
@@ -54,6 +54,8 @@ interface CNCStore {
     setJogMode: (mode: JogMode) => void;
     jogDistance: number;
     setJogDistance: (distance: number) => void;
+    jogSpeed: number;
+    setJogSpeed: (speed: number) => void;
     coordSystem: CoordSystem;
     setCoordSystem: (system: CoordSystem) => void;
 
@@ -223,6 +225,11 @@ export const useCNCStore = create<CNCStore>((set) => ({
     setJogDistance: (jogDistance) => {
         jogDistanceStorage.save(jogDistance);
         set({ jogDistance });
+    },
+    jogSpeed: jogSpeedStorage.load(),
+    setJogSpeed: (jogSpeed) => {
+        jogSpeedStorage.save(jogSpeed);
+        set({ jogSpeed });
     },
     coordSystem: coordSystemStorage.load(),
     setCoordSystem: (coordSystem) => {

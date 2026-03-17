@@ -49,6 +49,7 @@ export default function Sidebar() {
         connected,
         position, setPosition,
         jogDistance, setJogDistance,
+        jogSpeed, setJogSpeed,
         coordSystem, setCoordSystem,
         setGcode,
         fileInfo, setFileInfo,
@@ -59,7 +60,14 @@ export default function Sidebar() {
 
     // Continuous jog interval ref
     const continuousJogRef = useRef<ReturnType<typeof setInterval> | null>(null);
-    const continuousJogFeedRate = 1000;
+
+    // Jog speed presets (matching gSender)
+    const jogSpeedPresets = [
+        { label: 'Slow', value: 500 },
+        { label: 'Medium', value: 2500 },
+        { label: 'Fast', value: 5000 },
+        { label: 'Ultra', value: 10000 },
+    ];
 
     // Auto-scroll console
     useEffect(() => {
@@ -111,7 +119,7 @@ export default function Sidebar() {
         const distance = jogDistance * direction;
         const params: Record<string, number | undefined> = {};
         params[axis] = distance;
-        backendJog(params.x, params.y, params.z, continuousJogFeedRate);
+        backendJog(params.x, params.y, params.z, jogSpeed);
         addConsoleLog('info', `Jog ${axis.toUpperCase()} ${direction > 0 ? '+' : ''}${distance}mm`);
     };
 
@@ -119,7 +127,7 @@ export default function Sidebar() {
         if (!connected) return;
         const xDistance = jogDistance * xDir;
         const yDistance = jogDistance * yDir;
-        backendJog(xDistance, yDistance, undefined, continuousJogFeedRate);
+        backendJog(xDistance, yDistance, undefined, jogSpeed);
         addConsoleLog('info', `Jog X${xDir > 0 ? '+' : ''}${xDistance} Y${yDir > 0 ? '+' : ''}${yDistance}mm`);
     };
 
@@ -641,6 +649,26 @@ export default function Sidebar() {
                                         onClick={() => setJogDistance(s)}
                                     >
                                         {s}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* Speed selection */}
+                        <div className="step-row flex items-center gap-2 mt-2">
+                            <span className="step-label text-xs font-bold text-text-dim uppercase tracking-wider whitespace-nowrap">Speed</span>
+                            <div className="step-options flex gap-1 flex-1">
+                                {jogSpeedPresets.map(({ label, value }) => (
+                                    <button
+                                        key={value}
+                                        className={`step-opt flex-1 py-1 text-xs font-semibold text-center rounded-sm border transition-all duration-fast ${
+                                            jogSpeed === value
+                                                ? 'bg-blue-600 text-white border-blue-600 font-bold shadow-lg ring-2 ring-blue-300'
+                                                : 'bg-bg-input text-text-dim border-border-ui hover:border-border-hover hover:text-text-main'
+                                        }`}
+                                        onClick={() => setJogSpeed(value)}
+                                    >
+                                        {label}
                                     </button>
                                 ))}
                             </div>

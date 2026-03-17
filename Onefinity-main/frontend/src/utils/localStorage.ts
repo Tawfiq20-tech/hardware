@@ -4,6 +4,7 @@
 
 const STORAGE_KEYS = {
     JOG_DISTANCE: 'onefinity_jog_distance',
+    JOG_SPEED: 'onefinity_jog_speed',
     COORD_SYSTEM: 'onefinity_coord_system',
 } as const;
 
@@ -40,6 +41,14 @@ function loadFromStorage<T>(key: string, defaultValue: T): T {
 export const jogDistanceStorage = {
     save: (distance: number): void => saveToStorage(STORAGE_KEYS.JOG_DISTANCE, distance),
     load: (): number => loadFromStorage(STORAGE_KEYS.JOG_DISTANCE, 1), // Default to 1mm
+};
+
+/**
+ * Jog speed persistence
+ */
+export const jogSpeedStorage = {
+    save: (speed: number): void => saveToStorage(STORAGE_KEYS.JOG_SPEED, speed),
+    load: (): number => loadFromStorage(STORAGE_KEYS.JOG_SPEED, 1000), // Default to 1000 mm/min (medium-slow)
 };
 
 /**
