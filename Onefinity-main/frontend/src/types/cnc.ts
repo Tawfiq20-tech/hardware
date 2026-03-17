@@ -1,5 +1,5 @@
 // CNC Machine Types
-export type MachineState = 'idle' | 'running' | 'paused' | 'alarm';
+export type MachineState = 'idle' | 'running' | 'paused' | 'alarm' | 'motorError';
 
 export type JogMode = 'continuous' | 'step';
 

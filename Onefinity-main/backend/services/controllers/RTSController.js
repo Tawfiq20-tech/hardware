@@ -59,7 +59,7 @@ const WREG_SPINDLE_DELAY = 0x14;
 const WREG_PWM_FREQ = 0x15;
 const WREG_PROBE_SPEED = 0x17;
 
-// Machine state byte values from C1 response
+// Machine state byte values from B0/C1 response
 const MACHINE_STATE = {
     0x00: 'Idle',
     0x01: 'Run',
@@ -67,7 +67,12 @@ const MACHINE_STATE = {
     0x03: 'Home',
     0x04: 'Alarm',
     0x05: 'Jog',
+    0x08: 'Homing',
+    0x09: 'MotorError',  // Closed-loop motor error (from RTS-X)
 };
+
+// Motor reset command (from protocol analysis)
+const CMD_MOTOR_RESET = 0x0B; // Motor/alarm reset: 01 06 00 0B XX FF (XX = axis bitmask)
 
 // Status polling interval (10Hz = 100ms)
 const STATUS_POLL_INTERVAL = 100;
@@ -93,7 +98,7 @@ const FIRMWARE_DEFAULTS = {
 // These values are hardcoded based on hardware testing:
 //   X/Y/Z motors are physically wired backward → negate velocity for correct direction.
 //   A axis is wired correctly → no negation.
-const JOG_DIRECTION = [-1, -1, -1, 1]; // [X, Y, Z, A]
+const JOG_DIRECTION = [1, 1, 1, 1]; // [X, Y, Z, A] — no negation needed, board handles direction
 
 // ─── Controller ────────────────────────────────────────────────────────────
 
@@ -1116,6 +1121,8 @@ class RTSController extends EventEmitter {
             'homing:Z': () => this._homeAxis('Z'),
             'homing:A': () => this._homeAxis('A'),
             'unlock': () => this._unlock(),
+            'motor:reset': (axis) => this._motorReset(axis),
+            'motor:resetAll': () => this._motorResetAll(),
             'jog': (params) => this._jog(params),
             'jog:safe': (params) => this._jog(params),
             'move': (params) => this._move(params),
@@ -1381,9 +1388,9 @@ class RTSController extends EventEmitter {
             this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
 
             // Build seek move: drive axis toward limit switch at 2000 mm/min
-            // Direction is positive (limit switches at max travel end)
+            // Negative direction (limit switches at min travel / home end)
             const maxTravel = this._firmwareConfig.max_travel;
-            const seekDistance = Math.abs(maxTravel[axisIdx]) + 10; // Positive = toward switch
+            const seekDistance = -(Math.abs(maxTravel[axisIdx]) + 10); // Negative = toward switch
 
             const payload = Buffer.alloc(22);
             payload[0] = CMD_QUERY;
@@ -1463,12 +1470,14 @@ class RTSController extends EventEmitter {
      * Unlock/clear alarm.
      */
     _unlock() {
-        logger.info('[RTS] Sending unlock ($X)');
+        logger.info('[RTS] Sending unlock — motor reset all + $X');
+        // Try binary motor reset first (RTS protocol)
+        this._motorResetAll();
+        // Also try $X as fallback
         this._writeAscii('$X\n');
-        // Also try soft reset in case $X doesn't work
         setTimeout(() => {
-            if (this._activeState === 'Alarm') {
-                logger.info('[RTS] Still in alarm after $X, trying soft reset');
+            if (this._activeState === 'Alarm' || this._activeState === 'MotorError') {
+                logger.info('[RTS] Still in alarm after reset, trying soft reset');
                 this._writeAscii('\x18');
             }
         }, 500);
@@ -1477,6 +1486,41 @@ class RTSController extends EventEmitter {
         this._updateStateObject();
         this.emit('state', this.getState());
         this.emit('status', this.state.status);
+    }
+
+    /**
+     * Reset a specific motor's closed-loop error.
+     * @param {string} axis - 'X', 'Y', 'Z', or 'A'
+     */
+    _motorReset(axis) {
+        const axisMap = { X: 0, Y: 1, Z: 2, A: 3 };
+        const axisIdx = axisMap[String(axis).toUpperCase()];
+        if (axisIdx === undefined) return;
+        logger.info(`[RTS] Resetting motor: ${axis} (axis ${axisIdx})`);
+        // Try CMD 0x0B with axis index
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_MOTOR_RESET, axisIdx]));
+        // Also try soft reset character
+        this._writeAscii('\x18');
+        this.emit('console', `[RTS] Motor ${axis} reset sent`);
+        this.emit('motor:status', { axis: String(axis).toUpperCase(), status: 'reset' });
+    }
+
+    /**
+     * Reset all motors' closed-loop errors.
+     */
+    _motorResetAll() {
+        logger.info('[RTS] Resetting all motors');
+        // Reset each axis
+        for (let i = 0; i < 4; i++) {
+            this._writeFrame(Buffer.from([CMD_QUERY, CMD_MOTOR_RESET, i]));
+        }
+        // Also send soft reset
+        this._writeAscii('\x18');
+        this._activeState = 'Idle';
+        this._updateStateObject();
+        this.emit('state', this.getState());
+        this.emit('console', '[RTS] All motors reset');
+        this.emit('motor:status', { axis: 'all', status: 'reset' });
     }
 
     /**

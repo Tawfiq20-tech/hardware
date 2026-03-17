@@ -543,6 +543,11 @@ class CNCEngine extends EventEmitter {
             this.io.emit('homing:limits', data);
         });
 
+        // ─── Motor status events ──────────────────────────────
+        this.controller.on('motor:status', (data) => {
+            this.io.emit('motor:status', data);
+        });
+
         // Close
         this.controller.on('close', () => {
             // Handled by _onConnectionClose

@@ -172,6 +172,7 @@ function _wireControllerToStore(): void {
                 'Idle': 'idle', 'Run': 'running', 'Hold': 'paused',
                 'Jog': 'running', 'Alarm': 'alarm', 'Door': 'paused',
                 'Check': 'idle', 'Home': 'running', 'Sleep': 'idle',
+                'MotorError': 'motorError', 'Homing': 'running',
             };
             const mapped = stateMap[state.status.activeState];
             if (mapped) s.setMachineState(mapped);
@@ -489,6 +490,13 @@ export function backendJog(x?: number, y?: number, z?: number, feedRate = 1000):
 
 export function backendHome(): void { controller.home(); }
 export function backendUnlock(): void { controller.unlock(); }
+export function backendMotorReset(axis?: string): void {
+    if (axis) {
+        controller.command(`motor:reset`, axis);
+    } else {
+        controller.command('motor:resetAll');
+    }
+}
 
 export function backendJobLoad(content: string): void {
     controller.loadFile('loaded.gcode', content);

@@ -16,6 +16,7 @@ import {
     backendHomeAxis,
     backendUnlock,
     backendZeroAll,
+    backendMotorReset,
 } from '../utils/backendConnection';
 import ProbeWizard from './ProbeWizard';
 import SurfacingTool from './SurfacingTool';
@@ -449,14 +450,29 @@ export default function Sidebar() {
                 {/* ──── Tab Content: Position ──── */}
                 {settingsTab === 'Position' && (
                     <div className="sidebar-section" style={{ borderBottom: 'none' }}>
-                        {/* Alarm Banner */}
-                        {useCNCStore.getState().machineState === 'alarm' && (
-                            <div className="pos-alarm-banner">
-                                <AlertTriangle size={14} />
-                                <span>ALARM — Machine locked</span>
-                                <button onClick={() => { backendUnlock(); addConsoleLog('info', 'Sending unlock ($X)...'); }}>
-                                    CLEAR
-                                </button>
+                        {/* Alarm / Motor Error Banner */}
+                        {(useCNCStore.getState().machineState === 'alarm' || useCNCStore.getState().machineState === 'motorError') && (
+                            <div className="pos-alarm-banner" style={{ flexDirection: 'column', gap: '6px' }}>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', width: '100%' }}>
+                                    <AlertTriangle size={14} />
+                                    <span style={{ flex: 1 }}>
+                                        {useCNCStore.getState().machineState === 'motorError'
+                                            ? 'MOTOR ERROR — Closed-loop error detected'
+                                            : 'ALARM — Machine locked'}
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '4px', width: '100%' }}>
+                                    {['X', 'Y', 'Z'].map(axis => (
+                                        <button key={axis} style={{ flex: 1, padding: '4px 8px', fontSize: '11px', background: '#c0392b', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                                            onClick={() => { backendMotorReset(axis); addConsoleLog('info', `Resetting ${axis} motor...`); }}>
+                                            Reset {axis}
+                                        </button>
+                                    ))}
+                                    <button style={{ flex: 1, padding: '4px 8px', fontSize: '11px', background: '#2980b9', color: '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer' }}
+                                        onClick={() => { backendMotorReset(); backendUnlock(); addConsoleLog('info', 'Resetting all motors...'); }}>
+                                        Reset All
+                                    </button>
+                                </div>
                             </div>
                         )}
 
@@ -517,8 +533,8 @@ export default function Sidebar() {
                 {/* ──── Tab Content: Jog ──── */}
                 {settingsTab === 'Jog' && (
                     <div className="sidebar-section" style={{ borderBottom: 'none' }}>
-                        {/* Alarm Banner */}
-                        {useCNCStore.getState().machineState === 'alarm' && (
+                        {/* Alarm / Motor Error Banner */}
+                        {(useCNCStore.getState().machineState === 'alarm' || useCNCStore.getState().machineState === 'motorError') && (
                             <div style={{
                                 background: 'rgba(220, 50, 50, 0.15)',
                                 border: '1px solid rgba(220, 50, 50, 0.4)',
@@ -526,31 +542,30 @@ export default function Sidebar() {
                                 padding: '8px 12px',
                                 marginBottom: '8px',
                                 display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'space-between',
-                                gap: '8px',
+                                flexDirection: 'column',
+                                gap: '6px',
                             }}>
-                                <span style={{ color: '#ff6b6b', fontWeight: 700, fontSize: '12px' }}>
-                                    ALARM — Machine locked
-                                </span>
-                                <button
-                                    onClick={() => {
-                                        import('../utils/backendConnection').then(m => m.backendUnlock());
-                                        addConsoleLog('info', 'Sending unlock ($X)...');
-                                    }}
-                                    style={{
-                                        background: '#dc3232',
-                                        color: '#fff',
-                                        border: 'none',
-                                        borderRadius: '4px',
-                                        padding: '4px 12px',
-                                        fontSize: '11px',
-                                        fontWeight: 700,
-                                        cursor: 'pointer',
-                                    }}
-                                >
-                                    CLEAR ALARM
-                                </button>
+                                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                    <span style={{ color: '#ff6b6b', fontWeight: 700, fontSize: '12px' }}>
+                                        {useCNCStore.getState().machineState === 'motorError'
+                                            ? 'MOTOR ERROR — Closed-loop error'
+                                            : 'ALARM — Machine locked'}
+                                    </span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '4px' }}>
+                                    {['X', 'Y', 'Z'].map(axis => (
+                                        <button key={axis}
+                                            onClick={() => { backendMotorReset(axis); addConsoleLog('info', `Resetting ${axis} motor...`); }}
+                                            style={{ flex: 1, background: '#c0392b', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                                            Reset {axis}
+                                        </button>
+                                    ))}
+                                    <button
+                                        onClick={() => { backendMotorReset(); backendUnlock(); addConsoleLog('info', 'Resetting all motors...'); }}
+                                        style={{ flex: 1, background: '#2980b9', color: '#fff', border: 'none', borderRadius: '4px', padding: '4px 8px', fontSize: '11px', fontWeight: 700, cursor: 'pointer' }}>
+                                        Reset All
+                                    </button>
+                                </div>
                             </div>
                         )}
                         <span className="section-label">Manual Jog Control</span>
