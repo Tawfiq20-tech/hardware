@@ -3,7 +3,7 @@ import {
     ChevronUp, ChevronDown,
     Upload, File, X, Play, Terminal,
     Settings, Info, Check, AlertTriangle, Circle, Plus, Edit, Trash2,
-    RefreshCw, RotateCcw, FileText, Crosshair,
+    RefreshCw, RotateCcw, FileText, Crosshair, Home,
 } from 'lucide-react';
 import { useCNCStore } from '../stores/cncStore';
 import { formatAxisValue, formatFileSize } from '../utils/formatters';
@@ -12,6 +12,10 @@ import { buildToolpathSegments } from '../utils/toolpathBuilder';
 import {
     sendBackendCommand,
     backendJog,
+    backendHome,
+    backendHomeAxis,
+    backendUnlock,
+    backendZeroAll,
 } from '../utils/backendConnection';
 import ProbeWizard from './ProbeWizard';
 import SurfacingTool from './SurfacingTool';
@@ -132,9 +136,21 @@ export default function Sidebar() {
 
     const handleZeroAll = () => {
         if (!connected) return;
-        sendBackendCommand('G10 L20 P0 X0 Y0 Z0');
+        backendZeroAll();
         setPosition({ x: 0, y: 0, z: 0 });
         addConsoleLog('info', 'All axes zeroed');
+    };
+
+    const handleHomeAll = () => {
+        if (!connected) return;
+        backendHome();
+        addConsoleLog('info', 'Homing all axes...');
+    };
+
+    const handleHomeAxis = (axis: 'X' | 'Y' | 'Z') => {
+        if (!connected) return;
+        backendHomeAxis(axis);
+        addConsoleLog('info', `Homing ${axis} axis...`);
     };
 
     const processFile = (file: File) => {
@@ -425,31 +441,67 @@ export default function Sidebar() {
                 {/* ──── Tab Content: Position ──── */}
                 {settingsTab === 'Position' && (
                     <div className="sidebar-section" style={{ borderBottom: 'none' }}>
-                        <div className="section-header">
-                            <span className="section-label">Machine Position</span>
-                            <button className="zero-all-btn" onClick={handleZeroAll} disabled={!connected}>
-                                Zero All
+                        {/* Alarm Banner */}
+                        {useCNCStore.getState().machineState === 'alarm' && (
+                            <div className="pos-alarm-banner">
+                                <AlertTriangle size={14} />
+                                <span>ALARM — Machine locked</span>
+                                <button onClick={() => { backendUnlock(); addConsoleLog('info', 'Sending unlock ($X)...'); }}>
+                                    CLEAR
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Action Buttons Row */}
+                        <div className="pos-action-row">
+                            <button className="pos-action-btn pos-zero-btn" onClick={handleZeroAll} disabled={!connected}>
+                                <Crosshair size={14} />
+                                ZERO ALL
+                            </button>
+                            <button className="pos-action-btn pos-home-btn" onClick={handleHomeAll} disabled={!connected}>
+                                <Home size={14} />
+                                HOME ALL
                             </button>
                         </div>
 
+                        {/* Position Table Header */}
+                        <div className="pos-table-header">
+                            <span className="pos-th-axis">Axis</span>
+                            <span className="pos-th-work">Work Position</span>
+                            <span className="pos-th-machine">Machine Position</span>
+                            <span className="pos-th-actions"></span>
+                        </div>
+
+                        {/* Axis Rows */}
                         <div className="dro-container">
-                            {(['x', 'y', 'z'] as const).map(axis => (
-                                <div className="dro-row" key={axis}>
-                                    <div
-                                        className="dro-axis-badge"
-                                        style={{ background: AXIS_COLORS[axis] }}
-                                    >
-                                        {axis.toUpperCase()}
+                            {(['x', 'y', 'z'] as const).map(axis => {
+                                const machinePos = useCNCStore.getState().machinePosition;
+                                return (
+                                    <div className="dro-row" key={axis}>
+                                        <div
+                                            className="dro-axis-badge"
+                                            style={{ background: AXIS_COLORS[axis] }}
+                                        >
+                                            {axis.toUpperCase()}
+                                        </div>
+                                        <span className="dro-value">
+                                            {formatAxisValue(position[axis])}
+                                            <span className="dro-unit">mm</span>
+                                        </span>
+                                        <span className="dro-machine-value">
+                                            {formatAxisValue(machinePos[axis])}
+                                        </span>
+                                        <div className="dro-btn-group">
+                                            <button className="dro-zero-btn" onClick={() => handleZero(axis)} title="Zero this axis">
+                                                <Crosshair size={11} />
+                                            </button>
+                                            <button className="dro-home-btn" onClick={() => handleHomeAxis(axis.toUpperCase() as 'X' | 'Y' | 'Z')} title={`Home ${axis.toUpperCase()} axis`}>
+                                                <Home size={11} />
+                                            </button>
+                                        </div>
                                     </div>
-                                    <span className="dro-value">
-                                        {formatAxisValue(position[axis])}
-                                        <span className="dro-unit">mm</span>
-                                    </span>
-                                    <button className="dro-zero-btn" onClick={() => handleZero(axis)}>
-                                        Zero
-                                    </button>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
                 )}

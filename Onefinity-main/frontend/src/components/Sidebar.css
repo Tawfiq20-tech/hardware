@@ -107,19 +107,131 @@
     margin-left: 2px;
 }
 
-.dro-zero-btn {
+/* Position Tab - Action Row */
+.pos-alarm-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: rgba(220, 50, 50, 0.12);
+    border: 1px solid rgba(220, 50, 50, 0.35);
+    border-radius: var(--radius-md);
+    padding: 6px 10px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #ff6b6b;
+}
+
+.pos-alarm-banner button {
+    margin-left: auto;
+    background: #dc3232;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    padding: 3px 10px;
     font-size: 9px;
     font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+}
+
+.pos-alarm-banner button:hover { background: #b82828; }
+
+.pos-action-row {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 8px;
+}
+
+.pos-action-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 0;
+    border-radius: var(--radius-md);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    transition: all var(--transition-fast);
+    border: 1px solid var(--border-ui);
+}
+
+.pos-zero-btn {
+    background: var(--bg-panel);
+    color: var(--primary-accent);
+}
+.pos-zero-btn:hover {
+    background: var(--primary-accent);
+    color: var(--bg-main);
+    border-color: var(--primary-accent);
+}
+
+.pos-home-btn {
+    background: var(--bg-panel);
+    color: var(--success, oklch(0.7 0.15 145));
+}
+.pos-home-btn:hover {
+    background: var(--success, oklch(0.7 0.15 145));
+    color: var(--bg-main);
+    border-color: var(--success, oklch(0.7 0.15 145));
+}
+
+.pos-action-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+/* Position Table Header */
+.pos-table-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     padding: 4px 10px;
+    font-size: 9px;
+    font-weight: 700;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.pos-th-axis { width: 26px; flex-shrink: 0; text-align: center; }
+.pos-th-work { flex: 1; text-align: right; }
+.pos-th-machine { width: 80px; text-align: right; }
+.pos-th-actions { width: 52px; }
+
+/* Machine position value in DRO row */
+.dro-machine-value {
+    width: 80px;
+    text-align: right;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-dim);
+    flex-shrink: 0;
+}
+
+/* Button group in DRO row */
+.dro-btn-group {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.dro-zero-btn, .dro-home-btn {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
     border-radius: var(--radius-sm);
     background: var(--bg-panel);
     border: 1px solid var(--border-ui);
     color: var(--text-dim);
     cursor: pointer;
     transition: all var(--transition-fast);
-    font-family: var(--font-sans);
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
+    padding: 0;
 }
 
 .dro-zero-btn:hover {
@@ -128,30 +240,10 @@
     border-color: var(--primary-accent);
 }
 
-.zero-all-btn {
-    font-size: 9px;
-    font-weight: 700;
-    padding: 3px 10px;
-    border-radius: var(--radius-sm);
-    background: none;
-    border: 1px solid var(--border-ui);
-    color: var(--text-dim);
-    cursor: pointer;
-    transition: all var(--transition-fast);
-    font-family: var(--font-sans);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-}
-
-.zero-all-btn:hover {
-    background: var(--primary-accent);
+.dro-home-btn:hover {
+    background: var(--success, oklch(0.7 0.15 145));
     color: var(--bg-main);
-    border-color: var(--primary-accent);
-}
-
-.zero-all-btn:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
+    border-color: var(--success, oklch(0.7 0.15 145));
 }
 
 /* ---- Jog Controls ---- */

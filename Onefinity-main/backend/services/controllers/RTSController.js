@@ -73,6 +73,19 @@ const STATUS_POLL_INTERVAL = 100;
 // Initialization timeout
 const INIT_TIMEOUT = 5000;
 
+// Connection health timeout (no response for 3 seconds = stale)
+const HEALTH_STALE_TIMEOUT = 3000;
+
+// ─── Firmware Config Defaults (from decoded firmware) ─────────────────────
+const FIRMWARE_DEFAULTS = {
+    steps_per_mm: [125, 125, 200, 38.889],     // X, Y, Z, A
+    max_velocity: [15240, 15240, 7620, 21600],  // mm/min
+    accel: [1800000, 1800000, 1800000, 750000],
+    min_travel: [0, 0, -160, -720],
+    max_travel: [1227, 1228, 0, 720],
+    inverted: [true, true, true, false],
+};
+
 // ─── Controller ────────────────────────────────────────────────────────────
 
 class RTSController extends EventEmitter {
@@ -104,6 +117,27 @@ class RTSController extends EventEmitter {
 
         /** @type {boolean} Whether we received the initial idle message */
         this._gotIdleMsg = false;
+
+        // ─── Connection Health ──────────────────────────────────────
+        /** @type {number} Timestamp of last response from board */
+        this._lastResponseTime = 0;
+
+        /** @type {NodeJS.Timeout|null} Health check timer */
+        this._healthTimer = null;
+
+        /** @type {number} Count of missed polls */
+        this._missedPolls = 0;
+
+        // ─── Firmware Config (from decoded firmware defaults) ────────
+        /** @type {object} Machine config from firmware */
+        this._firmwareConfig = { ...FIRMWARE_DEFAULTS };
+
+        // ─── Homing State ───────────────────────────────────────────
+        /** @type {boolean} Whether homing is in progress */
+        this._homing = false;
+
+        /** @type {string|null} Which axis is being homed (null = all) */
+        this._homingAxis = null;
 
         // ─── Machine State ──────────────────────────────────────────
 
@@ -235,6 +269,7 @@ class RTSController extends EventEmitter {
      */
     unbind() {
         this._stopPolling();
+        this._stopHealthMonitor();
         this._clearInitTimer();
         if (this._jogStopTimer) {
             clearTimeout(this._jogStopTimer);
@@ -252,6 +287,7 @@ class RTSController extends EventEmitter {
         this._initialized = false;
         this._running = false;
         this._paused = false;
+        this._homing = false;
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -307,6 +343,7 @@ class RTSController extends EventEmitter {
         if (this._initialized) return;
         this._initialized = true;
         this._clearInitTimer();
+        this._lastResponseTime = Date.now();
 
         logger.info(`[RTS] Initialization complete - firmware: ${this._firmwareVersion || 'unknown'}`);
 
@@ -325,6 +362,9 @@ class RTSController extends EventEmitter {
 
         // Start 10Hz status polling
         this._startPolling();
+
+        // Start connection health monitoring
+        this._startHealthMonitor();
     }
 
     _clearInitTimer() {
@@ -517,6 +557,10 @@ class RTSController extends EventEmitter {
             return;
         }
 
+        // Track connection health
+        this._lastResponseTime = Date.now();
+        this._missedPolls = 0;
+
         const stateByte = frame[3];
         const flags = frame[4];
 
@@ -567,6 +611,11 @@ class RTSController extends EventEmitter {
             if (this._activeState === 'Alarm') {
                 this.emit('alarm', { code: stateByte, message: 'Machine is in alarm state. Clear with Unlock ($X).' });
             }
+
+            // Detect homing completion (transition from Home to Idle)
+            if (this._homing && prevState === 'Home' && this._activeState === 'Idle') {
+                this._onHomingComplete();
+            }
         }
 
         // Check if step jog has reached target distance
@@ -585,6 +634,9 @@ class RTSController extends EventEmitter {
     _handleStateFrame(frame) {
         if (frame.length < 5) return;
 
+        // Track connection health
+        this._lastResponseTime = Date.now();
+
         const stateVal = frame[3];
         const prevState = this._activeState;
 
@@ -601,12 +653,15 @@ class RTSController extends EventEmitter {
             if (this._activeState === 'Alarm') {
                 this.emit('alarm', { code: stateVal, message: 'Machine is in alarm state. Clear with Unlock ($X).' });
             }
+
+            // Detect homing completion
+            if (this._homing && prevState === 'Home' && this._activeState === 'Idle') {
+                this._onHomingComplete();
+            }
         }
 
         // If we get idle during init, it means the board is ready
         if (!this._initialized && stateVal === 0x00) {
-            // Don't complete init yet - wait for firmware query response
-            // But mark that we got the idle message
             logger.info('[RTS] Got initial idle message from board');
         }
     }
@@ -617,6 +672,7 @@ class RTSController extends EventEmitter {
      * The JSON text spans from byte 3 to byte (len-2).
      */
     _handleJsonFrame(frame) {
+        this._lastResponseTime = Date.now();
         try {
             // Extract JSON string between A0 byte and FF byte
             const jsonBytes = frame.slice(3, frame.length - 1);
@@ -705,9 +761,23 @@ class RTSController extends EventEmitter {
 
         this._settings[param] = value;
 
-        // Extract specific useful settings
+        // Extract specific useful settings and update firmware config
         if (param === 'serial_num') {
             this._serialNumber = String(value);
+        } else if (param === 'steps' && Array.isArray(value)) {
+            this._firmwareConfig.steps_per_mm = value.slice(0, 4);
+            logger.info(`[RTS] Steps/mm: ${value}`);
+        } else if (param === 'max_v' && Array.isArray(value)) {
+            this._firmwareConfig.max_velocity = value.slice(0, 4);
+            logger.info(`[RTS] Max velocity: ${value}`);
+        } else if (param === 'accel' && Array.isArray(value)) {
+            this._firmwareConfig.accel = value.slice(0, 4);
+        } else if (param === 'min_travel' && Array.isArray(value)) {
+            this._firmwareConfig.min_travel = value.slice(0, 4);
+        } else if (param === 'max_travel' && Array.isArray(value)) {
+            this._firmwareConfig.max_travel = value.slice(0, 4);
+        } else if (param === 'inverted' && Array.isArray(value)) {
+            this._firmwareConfig.inverted = value.slice(0, 4).map(v => !!v);
         }
 
         // Emit individual setting for frontend
@@ -900,9 +970,14 @@ class RTSController extends EventEmitter {
 
             // Machine control
             'homing': () => this._home(),
+            'homing:X': () => this._homeAxis('X'),
+            'homing:Y': () => this._homeAxis('Y'),
+            'homing:Z': () => this._homeAxis('Z'),
+            'homing:A': () => this._homeAxis('A'),
             'unlock': () => this._unlock(),
             'jog': (params) => this._jog(params),
             'jog:safe': (params) => this._jog(params),
+            'move': (params) => this._move(params),
 
             // Info requests
             'settings': () => this._requestSettings(),
@@ -929,6 +1004,11 @@ class RTSController extends EventEmitter {
             // Macros
             'macro:run': (content) => this._sendGcode(content),
 
+            // WCS
+            'wcs:set': (wcs) => this._setWCS(wcs),
+            'wcs:zero': (params) => this._zeroWCS(params),
+            'wcs:zeroAll': () => this._zeroAll(),
+
             // Triggers (no-op stubs)
             'trigger:set': () => {},
             'trigger:loadAll': () => {},
@@ -947,16 +1027,14 @@ class RTSController extends EventEmitter {
      * Send a jog command using position-monitored binary velocity jog.
      *
      * The frontend sends distance-based params (e.g. x=1 means move 1mm).
-     * We use closed-loop control:
-     *   1. Record start position
-     *   2. Send velocity jog (binary frame 0x20)
-     *   3. Monitor B0 position updates (10Hz)
-     *   4. When distance reached, send zero velocity to stop
+     * Uses firmware-mapped velocity scaling:
+     *   - feedRate (mm/min) is scaled relative to firmware max_velocity
+     *   - RTS velocity unit maps to firmware's internal speed scale
+     *   - Position monitoring via B0 status frames (10Hz) for distance control
      *
-     * RTS velocity scale (from captures):
-     *   1.0  = slow normalized jog
-     *   100.0 = medium speed
-     *   Velocity is NOT in mm/s — it's an internal scale
+     * Velocity scaling (from firmware config):
+     *   feedRate 1000 mm/min on X (max 15240) → vel = 1000/15240 * 254 ≈ 16.7
+     *   Small step sizes use lower velocities for accuracy
      *
      * @param {object} params - {x, y, z, a, feedRate}
      */
@@ -980,27 +1058,38 @@ class RTSController extends EventEmitter {
             distA: Math.abs(a),
         };
 
-        // Map feedRate (mm/min) to RTS velocity scale
-        // From captures: max_velocity X/Y = 15240 mm/min maps to ~254 mm/s
-        // RTS velocity 100.0 appears to be a moderate speed
-        // Scale: velocity = feedRate * 100 / max_velocity ≈ feedRate / 150
-        const vel = Math.max(1, Math.min(feedRate / 10, 500));
+        // Firmware-mapped velocity scaling
+        // Scale feedRate relative to each axis's max velocity from firmware config
+        const maxVel = this._firmwareConfig.max_velocity;
+        const computeVel = (dist, axisIdx) => {
+            if (dist === 0) return 0;
+            // Scale: feedRate / max_velocity * 254 (RTS internal unit)
+            // Clamp to reasonable range for safety
+            const axisMax = maxVel[axisIdx] || 15240;
+            const scaled = (feedRate / axisMax) * 254;
+            // For small steps (< 1mm), use lower velocity for accuracy
+            const distFactor = Math.abs(dist) < 1 ? Math.max(0.3, Math.abs(dist)) : 1;
+            const vel = Math.max(1, Math.min(scaled * distFactor, 500));
+            return Math.sign(dist) * vel;
+        };
 
-        const vx = x !== 0 ? Math.sign(x) * vel : 0;
-        const vy = y !== 0 ? Math.sign(y) * vel : 0;
-        const vz = z !== 0 ? Math.sign(z) * vel : 0;
-        const va = a !== 0 ? Math.sign(a) * vel : 0;
+        const vx = computeVel(x, 0);
+        const vy = computeVel(y, 1);
+        const vz = computeVel(z, 2);
+        const va = computeVel(a, 3);
 
-        logger.info(`[RTS] Jog start: x=${x} y=${y} z=${z} vel=${vel} feedRate=${feedRate}`);
+        logger.info(`[RTS] Jog start: x=${x} y=${y} z=${z} feedRate=${feedRate} vel=[${vx.toFixed(1)},${vy.toFixed(1)},${vz.toFixed(1)},${va.toFixed(1)}]`);
 
         // Send velocity jog
         this._sendJogFrame(vx, vy, vz, va);
 
-        // Safety timeout: stop after 5 seconds max regardless
+        // Safety timeout: scale with distance (min 2s, max 10s)
+        const maxDist = Math.max(Math.abs(x), Math.abs(y), Math.abs(z), Math.abs(a));
+        const timeout = Math.max(2000, Math.min(maxDist * 100 + 2000, 10000));
         this._jogStopTimer = setTimeout(() => {
             this._cancelActiveJog();
             logger.warn('[RTS] Jog safety timeout - stopping');
-        }, 5000);
+        }, timeout);
     }
 
     /**
@@ -1051,13 +1140,64 @@ class RTSController extends EventEmitter {
     }
 
     /**
-     * Home all axes.
+     * Home all axes using firmware $H command.
+     * Tracks homing state and updates position on completion.
      */
     _home() {
+        logger.info('[RTS] Starting auto-home (all axes)');
+        this._homing = true;
+        this._homingAxis = null;
         this._writeAscii('$H\n');
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
+        this.emit('homing:location', { location: 'all', status: 'started' });
+        this.emit('console', '[RTS] Homing all axes...');
+    }
+
+    /**
+     * Home a single axis.
+     * @param {string} axis - 'X', 'Y', 'Z', or 'A'
+     */
+    _homeAxis(axis) {
+        const axisUpper = String(axis).toUpperCase();
+        if (!['X', 'Y', 'Z', 'A'].includes(axisUpper)) {
+            logger.warn(`[RTS] Invalid home axis: ${axis}`);
+            return;
+        }
+        logger.info(`[RTS] Starting auto-home (${axisUpper} axis)`);
+        this._homing = true;
+        this._homingAxis = axisUpper;
+        this._writeAscii(`$H${axisUpper}\n`);
+        this._activeState = 'Home';
+        this._updateStateObject();
+        this.emit('state', this.getState());
+        this.emit('homing:location', { location: axisUpper, status: 'started' });
+        this.emit('console', `[RTS] Homing ${axisUpper} axis...`);
+    }
+
+    /**
+     * Called when homing completes (state transitions from Home to Idle).
+     * Requests fresh position data and resets work coordinates.
+     */
+    _onHomingComplete() {
+        const axis = this._homingAxis || 'all';
+        this._homing = false;
+        this._homingAxis = null;
+
+        logger.info(`[RTS] Homing complete (${axis})`);
+        this.emit('homing:location', { location: axis, status: 'completed' });
+        this.emit('console', `[RTS] Homing ${axis} complete — position updated`);
+
+        // Request fresh status to update position
+        this._sendQueryFrame(REG_STATUS);
+
+        // Request work coordinate offsets to sync WCS
+        setTimeout(() => {
+            if (this.connection) {
+                this._sendQueryFrame(REG_CONFIG_TYPE);
+            }
+        }, 200);
     }
 
     /**
@@ -1124,6 +1264,100 @@ class RTSController extends EventEmitter {
      */
     _clearEstop() {
         this._writeAscii('$X\n');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Move API — Abstraction for absolute/relative positioning
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Move to a position using G-code.
+     * @param {object} params - {x, y, z, a, feedRate, mode: 'absolute'|'relative'}
+     */
+    _move(params = {}) {
+        const { x, y, z, a, feedRate = 1000, mode = 'relative' } = params;
+
+        const axes = [];
+        if (x !== undefined) axes.push(`X${x}`);
+        if (y !== undefined) axes.push(`Y${y}`);
+        if (z !== undefined) axes.push(`Z${z}`);
+        if (a !== undefined) axes.push(`A${a}`);
+
+        if (axes.length === 0) return;
+
+        const distMode = mode === 'absolute' ? 'G90' : 'G91';
+        const gcode = `${distMode} G21 G1 ${axes.join(' ')} F${feedRate}`;
+        logger.info(`[RTS] Move: ${gcode}`);
+        this._sendGcode(gcode);
+
+        // Return to absolute mode if we switched
+        if (mode === 'relative') {
+            this._sendGcode('G90');
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Connection Health Monitoring
+    // ═══════════════════════════════════════════════════════════════════════
+
+    _startHealthMonitor() {
+        this._stopHealthMonitor();
+        this._healthTimer = setInterval(() => {
+            const now = Date.now();
+            const elapsed = now - this._lastResponseTime;
+
+            if (elapsed > HEALTH_STALE_TIMEOUT) {
+                this._missedPolls++;
+                if (this._missedPolls === 1) {
+                    logger.warn(`[RTS] Connection stale — no response for ${elapsed}ms`);
+                    this.emit('health:stale', { elapsed, missedPolls: this._missedPolls });
+                }
+                if (this._missedPolls >= 10) {
+                    logger.error('[RTS] Connection appears dead — 10+ missed polls');
+                }
+            }
+        }, HEALTH_STALE_TIMEOUT);
+    }
+
+    _stopHealthMonitor() {
+        if (this._healthTimer) {
+            clearInterval(this._healthTimer);
+            this._healthTimer = null;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Work Coordinate System
+    // ═══════════════════════════════════════════════════════════════════════
+
+    _setWCS(wcs) {
+        // wcs is like 'G54', 'G55', etc.
+        if (wcs && /^G5[4-9]$/.test(wcs)) {
+            this._sendGcode(wcs);
+            this.state.parserstate.modal.wcs = wcs;
+            this.emit('parserstate', this.state.parserstate);
+        }
+    }
+
+    _zeroWCS(params = {}) {
+        const axes = params?.axes || ['X', 'Y', 'Z'];
+        const wcs = params?.wcs || 'G54';
+        const wcsNum = parseInt(wcs.replace('G', '')) - 53; // G54=1, G55=2, etc.
+        const axisStr = axes.map(a => `${a.toUpperCase()}0`).join(' ');
+        this._sendGcode(`G10 L20 P${wcsNum} ${axisStr}`);
+        // Update local WCO
+        for (const a of axes) {
+            const key = a.toLowerCase();
+            if (key in this._wco) {
+                this._wco[key] = this._mpos[key] || 0;
+            }
+        }
+        this._updateStateObject();
+        this.emit('status', this.state.status);
+    }
+
+    _zeroAll() {
+        this._zeroWCS({ axes: ['X', 'Y', 'Z'] });
     }
 
     // ═══════════════════════════════════════════════════════════════════════
@@ -1419,9 +1653,11 @@ class RTSController extends EventEmitter {
     getHealthMetrics() {
         return {
             connected: !!this.connection,
-            lastResponse: Date.now(),
-            missedPolls: 0,
+            lastResponse: this._lastResponseTime,
+            timeSinceLastResponse: this._lastResponseTime ? Date.now() - this._lastResponseTime : -1,
+            missedPolls: this._missedPolls,
             reconnectAttempts: 0,
+            healthy: this._missedPolls < 3,
         };
     }
 
