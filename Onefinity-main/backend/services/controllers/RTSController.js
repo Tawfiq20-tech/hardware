@@ -979,10 +979,16 @@ class RTSController extends EventEmitter {
             'jog:safe': (params) => this._jog(params),
             'move': (params) => this._move(params),
 
+            // Probing
+            'probe:z': (params) => this._probeZ(params),
+
             // Info requests
             'settings': () => this._requestSettings(),
             'buildinfo': () => this._requestBuildInfo(),
             'statusreport': () => this._sendQueryFrame(REG_STATUS),
+            'parserstate': () => this._getParserState(),
+            'workcoordinates': () => this._getWorkCoordinates(),
+            'checkmode': () => this._checkMode(),
 
             // Raw data
             'raw': (data) => this._sendRaw(data),
@@ -1144,7 +1150,7 @@ class RTSController extends EventEmitter {
      * Tracks homing state and updates position on completion.
      */
     _home() {
-        logger.info('[RTS] Starting auto-home (all axes)');
+        logger.info('[RTS] Starting auto-home (all axes) — uses limit switches');
         this._homing = true;
         this._homingAxis = null;
         this._writeAscii('$H\n');
@@ -1152,7 +1158,19 @@ class RTSController extends EventEmitter {
         this._updateStateObject();
         this.emit('state', this.getState());
         this.emit('homing:location', { location: 'all', status: 'started' });
-        this.emit('console', '[RTS] Homing all axes...');
+        this.emit('console', '[RTS] Homing all axes (limit switch detection)...');
+
+        // Homing timeout — if not complete within 60s, likely a limit switch issue
+        this._homingTimer = setTimeout(() => {
+            if (this._homing) {
+                this._homing = false;
+                this._homingAxis = null;
+                logger.error('[RTS] Homing timeout — check limit switches');
+                this.emit('alarm', { code: 0x03, message: 'Homing timeout — check limit switches are connected and working' });
+                this.emit('console', '[RTS] HOMING TIMEOUT — limit switch not triggered. Check wiring.');
+                this.emit('homing:location', { location: 'all', status: 'failed' });
+            }
+        }, 60000);
     }
 
     /**
@@ -1358,6 +1376,60 @@ class RTSController extends EventEmitter {
 
     _zeroAll() {
         this._zeroWCS({ axes: ['X', 'Y', 'Z'] });
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Probing
+    // ═══════════════════════════════════════════════════════════════════════
+
+    /**
+     * Z-axis probe using G38.2 command.
+     * @param {object} params - {depth, feedRate, retract}
+     */
+    _probeZ(params = {}) {
+        const depth = params?.depth || 30;
+        const feedRate = params?.feedRate || 100;
+        const retract = params?.retract || 2;
+
+        logger.info(`[RTS] Probe Z: depth=${depth} feedRate=${feedRate} retract=${retract}`);
+
+        const lines = [
+            'G21',                          // mm mode
+            'G91',                          // relative mode
+            `G38.2 Z-${depth} F${feedRate}`, // probe down
+            `G0 Z${retract}`,              // retract
+        ];
+        this._sendGcode(lines.join('\n'));
+        // Return to absolute mode
+        this._sendGcode('G90');
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // Info Queries (missing handlers)
+    // ═══════════════════════════════════════════════════════════════════════
+
+    _getParserState() {
+        // Emit current parser state
+        this.emit('parserstate', this.state.parserstate);
+    }
+
+    _getWorkCoordinates() {
+        // Query register 0x09 to get work coordinate offsets from board
+        this._sendQueryFrame(REG_CONFIG_TYPE);
+        // Also emit current offsets
+        for (let i = 0; i < this._offsets.length; i++) {
+            if (this._offsets[i]) {
+                this.emit('parameters', {
+                    type: `G${54 + i}`,
+                    value: this._offsets[i],
+                });
+            }
+        }
+    }
+
+    _checkMode() {
+        // GRBL check mode ($C) — send as ASCII passthrough
+        this._writeAscii('$C\n');
     }
 
     // ═══════════════════════════════════════════════════════════════════════
