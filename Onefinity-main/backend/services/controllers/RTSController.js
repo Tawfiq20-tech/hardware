@@ -874,15 +874,16 @@ class RTSController extends EventEmitter {
      * @param {number} vz - Z velocity
      * @param {number} va - A velocity
      */
-    _sendJogFrame(vx, vy, vz, va) {
-        const payload = Buffer.alloc(22); // 00 20 + 4*4 floats + 4 zero bytes = 22
+    _sendJogFrame(vx, vy, vz, va, feedRate = 2000) {
+        const payload = Buffer.alloc(22); // 00 20 + 4*4 floats + feedRate float = 22
         payload[0] = CMD_QUERY;  // 0x00
         payload[1] = CMD_JOG;   // 0x20
         payload.writeFloatLE(vx, 2);
         payload.writeFloatLE(vy, 6);
         payload.writeFloatLE(vz, 10);
         payload.writeFloatLE(va, 14);
-        // Last 4 bytes are zeros (already from alloc)
+        // Last 4 bytes = feed rate (from Wireshark: RTS-X sends 2000.0 here)
+        payload.writeFloatLE(feedRate, 18);
         this._writeFrame(payload);
     }
 
@@ -1085,12 +1086,12 @@ class RTSController extends EventEmitter {
 
         logger.info(`[RTS] Jog step: dist=${maxDist}mm feedRate=${feedRate}mm/min vel=[${vx.toFixed(1)},${vy.toFixed(1)},${vz.toFixed(1)},${va.toFixed(1)}] duration=${durationMs.toFixed(0)}ms`);
 
-        // Send velocity jog
-        this._sendJogFrame(vx, vy, vz, va);
+        // Send velocity jog with feedRate
+        this._sendJogFrame(vx, vy, vz, va, feedRate);
 
         // Stop after calculated duration
         this._jogStopTimer = setTimeout(() => {
-            this._sendJogFrame(0, 0, 0, 0);
+            this._sendJogFrame(0, 0, 0, 0, feedRate);
             logger.info('[RTS] Jog step complete — velocity zeroed');
         }, durationMs);
     }
