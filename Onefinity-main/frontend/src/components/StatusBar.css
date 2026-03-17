@@ -97,6 +97,25 @@
     font-size: 10px;
     letter-spacing: 0.06em;
     animation: alarmBlink 1s ease-in-out infinite;
+    gap: 8px;
+}
+
+.sb-alarm-clear {
+    background: var(--danger, oklch(0.65 0.2 15));
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    padding: 1px 8px;
+    font-size: 9px;
+    font-weight: 700;
+    cursor: pointer;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    animation: none;
+}
+
+.sb-alarm-clear:hover {
+    background: oklch(0.55 0.22 15);
 }
 
 @keyframes alarmBlink {

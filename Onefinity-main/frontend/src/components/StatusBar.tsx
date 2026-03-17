@@ -1,4 +1,5 @@
 import { useCNCStore } from '../stores/cncStore';
+import { backendUnlock } from '../utils/backendConnection';
 import './StatusBar.css';
 
 const STATE_LABELS: Record<string, string> = {
@@ -74,12 +75,19 @@ export default function StatusBar() {
                 </>
             )}
 
-            {/* Alarm badge */}
+            {/* Alarm badge + clear button */}
             {machineState === 'alarm' && (
                 <>
                     <div className="sb-divider" />
-                    <div className="sb-item sb-alarm-badge" title="Machine is in alarm state — check console">
-                        ⚠ ALARM
+                    <div className="sb-item sb-alarm-badge" title="Machine is in alarm state — click Clear to unlock">
+                        <span>ALARM</span>
+                        <button
+                            className="sb-alarm-clear"
+                            onClick={() => backendUnlock()}
+                            title="Send $X to clear alarm and unlock machine"
+                        >
+                            Clear
+                        </button>
                     </div>
                 </>
             )}

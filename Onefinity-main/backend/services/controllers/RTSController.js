@@ -552,6 +552,11 @@ class RTSController extends EventEmitter {
 
         if (prevState !== this._activeState) {
             this.emit('state', this.getState());
+
+            // Emit alarm event when entering alarm state
+            if (this._activeState === 'Alarm') {
+                this.emit('alarm', { code: stateByte, message: 'Machine is in alarm state. Clear with Unlock ($X).' });
+            }
         }
 
         // Complete init if not done yet (first status = board is alive)
@@ -579,6 +584,10 @@ class RTSController extends EventEmitter {
             this._updateStateObject();
             this.emit('state', this.getState());
             this.emit('status', this.state.status);
+
+            if (this._activeState === 'Alarm') {
+                this.emit('alarm', { code: stateVal, message: 'Machine is in alarm state. Clear with Unlock ($X).' });
+            }
         }
 
         // If we get idle during init, it means the board is ready
@@ -922,26 +931,26 @@ class RTSController extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * Send a jog command using the binary jog protocol.
+     * Send a jog command using GRBL $J incremental jog.
+     * The frontend sends distance-based params (e.g. x=1 means move 1mm).
+     * We use $J=G91G21 for precise step jogs instead of velocity frames.
      * @param {object} params - {x, y, z, a, feedRate}
      */
     _jog(params = {}) {
-        const { x = 0, y = 0, z = 0, a = 0, feedRate = 1 } = params;
+        const { x = 0, y = 0, z = 0, a = 0, feedRate = 1000 } = params;
 
-        // The RTS protocol uses velocity vectors, not distances
-        // feedRate maps to the velocity magnitude
-        // Normalize: feedRate of 1000 -> velocity of 1.0, higher = faster
-        const scale = typeof feedRate === 'number' && feedRate > 0 ? feedRate : 1;
+        if (x === 0 && y === 0 && z === 0 && a === 0) return;
 
-        // Clamp velocities to reasonable range
-        const vx = this._clampVelocity(x * scale);
-        const vy = this._clampVelocity(y * scale);
-        const vz = this._clampVelocity(z * scale);
-        const va = this._clampVelocity(a * scale);
+        // Build $J jog command (incremental, metric)
+        let cmd = '$J=G91G21';
+        if (x !== 0) cmd += `X${x}`;
+        if (y !== 0) cmd += `Y${y}`;
+        if (z !== 0) cmd += `Z${z}`;
+        if (a !== 0) cmd += `A${a}`;
+        cmd += `F${feedRate}`;
 
-        if (vx === 0 && vy === 0 && vz === 0 && va === 0) return;
-
-        this._sendJogFrame(vx, vy, vz, va);
+        logger.info(`[RTS] Jog: ${cmd}`);
+        this._writeAscii(cmd + '\n');
     }
 
     /**
