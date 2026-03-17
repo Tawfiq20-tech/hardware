@@ -100,6 +100,10 @@ const FIRMWARE_DEFAULTS = {
 //   A axis is wired correctly → no negation.
 const JOG_DIRECTION = [1, 1, 1, 1]; // [X, Y, Z, A] — no negation needed, board handles direction
 
+// Homing seek direction per axis: -1 = negative, +1 = positive
+// X homes negative (confirmed by Tawfiq), Y and Z home positive
+const HOME_DIRECTION = [-1, 1, 1, 1]; // [X, Y, Z, A]
+
 // ─── Controller ────────────────────────────────────────────────────────────
 
 class RTSController extends EventEmitter {
@@ -154,6 +158,10 @@ class RTSController extends EventEmitter {
         // ─── Firmware Config (from decoded firmware defaults) ────────
         /** @type {object} Machine config from firmware */
         this._firmwareConfig = { ...FIRMWARE_DEFAULTS };
+
+        // ─── Motor Reset Grace Period ────────────────────────────────
+        /** @type {number} Timestamp when motor reset was last sent (suppresses MotorError for grace period) */
+        this._motorResetTime = 0;
 
         // ─── Homing State ───────────────────────────────────────────
         /** @type {boolean} Whether homing is in progress */
@@ -679,7 +687,21 @@ class RTSController extends EventEmitter {
 
         // Map state byte to active state
         const prevState = this._activeState;
-        this._activeState = MACHINE_STATE[stateByte] || 'Idle';
+        const mappedState = MACHINE_STATE[stateByte] || 'Idle';
+
+        // Grace period after motor reset/unlock: suppress MotorError/Alarm for 3 seconds
+        // to let the board process the reset command before re-reporting error
+        const isErrorState = mappedState === 'MotorError' || mappedState === 'Alarm';
+        if (isErrorState && this._motorResetTime > 0 &&
+            (Date.now() - this._motorResetTime) < 3000) {
+            this._activeState = 'Idle';
+            logger.debug(`[RTS] Suppressing ${mappedState} during reset grace period`);
+        } else {
+            if (!isErrorState) {
+                this._motorResetTime = 0; // Clear grace period once board reports non-error
+            }
+            this._activeState = mappedState;
+        }
 
         // Update machine position
         this._mpos.x = this._roundPos(x);
@@ -741,7 +763,20 @@ class RTSController extends EventEmitter {
 
         logger.info(`[RTS] Machine state: 0x${stateVal.toString(16)} (${MACHINE_STATE[stateVal] || 'unknown'})`);
 
-        this._activeState = MACHINE_STATE[stateVal] || 'Idle';
+        const mappedStateC1 = MACHINE_STATE[stateVal] || 'Idle';
+
+        // Grace period after motor reset/unlock: suppress MotorError/Alarm for 3 seconds
+        const isErrorStateC1 = mappedStateC1 === 'MotorError' || mappedStateC1 === 'Alarm';
+        if (isErrorStateC1 && this._motorResetTime > 0 &&
+            (Date.now() - this._motorResetTime) < 3000) {
+            this._activeState = 'Idle';
+            logger.debug(`[RTS] Suppressing ${mappedStateC1} during reset grace period (C1)`);
+        } else {
+            if (!isErrorStateC1) {
+                this._motorResetTime = 0;
+            }
+            this._activeState = mappedStateC1;
+        }
         this._gotIdleMsg = true;
 
         if (prevState !== this._activeState) {
@@ -1388,9 +1423,9 @@ class RTSController extends EventEmitter {
             this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
 
             // Build seek move: drive axis toward limit switch at 2000 mm/min
-            // Negative direction (limit switches at min travel / home end)
+            // Per-axis direction: X=negative, Y/Z=positive (from hardware testing)
             const maxTravel = this._firmwareConfig.max_travel;
-            const seekDistance = -(Math.abs(maxTravel[axisIdx]) + 10); // Negative = toward switch
+            const seekDistance = HOME_DIRECTION[axisIdx] * (Math.abs(maxTravel[axisIdx]) + 10);
 
             const payload = Buffer.alloc(22);
             payload[0] = CMD_QUERY;
@@ -1471,6 +1506,8 @@ class RTSController extends EventEmitter {
      */
     _unlock() {
         logger.info('[RTS] Sending unlock — binary $X (CMD 0x81)');
+        // Start grace period — suppress MotorError/Alarm from B0 polls for 3 seconds
+        this._motorResetTime = Date.now();
         // Binary unlock from Wireshark: 01 06 00 81 58 FF
         this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
         this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
@@ -1481,6 +1518,8 @@ class RTSController extends EventEmitter {
                 this._writeAscii('\x18');
             }
         }, 500);
+        // Re-push machine config after unlock (helps board re-initialize)
+        setTimeout(() => this._pushMachineConfig(), 800);
         // Optimistically update state — will be corrected by next B0 poll
         this._activeState = 'Idle';
         this._updateStateObject();
@@ -1495,10 +1534,14 @@ class RTSController extends EventEmitter {
     _motorReset(axis) {
         const axisUpper = String(axis).toUpperCase();
         logger.info(`[RTS] Resetting motor: ${axisUpper}`);
+        // Start grace period — suppress MotorError from B0 polls for 3 seconds
+        this._motorResetTime = Date.now();
         // Binary unlock command from Wireshark: 01 06 00 81 58 FF (= binary $X)
         this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
-        // Also send soft reset character as fallback
-        this._writeAscii('\x18');
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
+        this._writeAscii('$X\n');
+        // Re-push machine config after reset (helps board re-initialize)
+        setTimeout(() => this._pushMachineConfig(), 500);
         // Optimistically clear state
         this._activeState = 'Idle';
         this._updateStateObject();
@@ -1512,6 +1555,8 @@ class RTSController extends EventEmitter {
      */
     _motorResetAll() {
         logger.info('[RTS] Resetting all motors');
+        // Start grace period — suppress MotorError from B0 polls for 3 seconds
+        this._motorResetTime = Date.now();
         // Binary unlock command from Wireshark: 01 06 00 81 58 FF (= binary $X)
         this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
         // Send twice for reliability
@@ -1519,6 +1564,8 @@ class RTSController extends EventEmitter {
         // Also try ASCII $X and soft reset as fallbacks
         this._writeAscii('$X\n');
         this._writeAscii('\x18');
+        // Re-push machine config after reset (helps board re-initialize)
+        setTimeout(() => this._pushMachineConfig(), 500);
         // Optimistically clear state
         this._activeState = 'Idle';
         this._updateStateObject();
