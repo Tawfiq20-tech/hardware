@@ -354,6 +354,13 @@ class Connection extends EventEmitter {
      * Falls back to defaultFirmware after max attempts.
      */
     _startFirmwareDetection() {
+        // Skip if firmware was already set (e.g., rawMode reconnect after RTS detection)
+        if (this.firmwareDetected) {
+            logger.info(`Firmware already detected on ${this.path}: ${this.controllerType} — skipping detection`);
+            this.emit('firmwareDetected', this.controllerType, this._dataBuffer);
+            return;
+        }
+
         this._detectAttempts = 0;
         this.firmwareDetected = false;
         this._dataBuffer = [];
