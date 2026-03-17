@@ -88,6 +88,13 @@ const FIRMWARE_DEFAULTS = {
     inverted: [true, true, true, false],
 };
 
+// Jog direction multiplier for CMD_JOG (0x20) raw velocity.
+// The firmware's `inverted` flag only applies to G-code motion, NOT raw jog velocity.
+// These values are hardcoded based on hardware testing:
+//   X/Y/Z motors are physically wired backward → negate velocity for correct direction.
+//   A axis is wired correctly → no negation.
+const JOG_DIRECTION = [-1, -1, -1, 1]; // [X, Y, Z, A]
+
 // ─── Controller ────────────────────────────────────────────────────────────
 
 class RTSController extends EventEmitter {
@@ -801,7 +808,12 @@ class RTSController extends EventEmitter {
         } else if (param === 'max_travel' && Array.isArray(value)) {
             this._firmwareConfig.max_travel = value.slice(0, 4);
         } else if (param === 'inverted' && Array.isArray(value)) {
-            this._firmwareConfig.inverted = value.slice(0, 4).map(v => !!v);
+            const boardInverted = value.slice(0, 4).map(v => !!v);
+            logger.info(`[RTS] Board reports inverted: ${JSON.stringify(boardInverted)} (jog uses hardcoded direction map)`);
+            // NOTE: We do NOT override _firmwareConfig.inverted from board settings.
+            // The board's inverted flag controls firmware-internal G-code processing,
+            // but CMD_JOG (0x20) raw velocity bypasses that — so we use our own
+            // hardcoded direction map for jog. See JOG_DIRECTION_MAP constant.
         }
 
         // Emit individual setting for frontend
@@ -1134,12 +1146,11 @@ class RTSController extends EventEmitter {
         let vz = computeVel(z, 2);
         let va = computeVel(a, 3);
 
-        // Apply axis inversion from firmware config
-        const inv = this._firmwareConfig.inverted;
-        if (inv[0]) vx = -vx;
-        if (inv[1]) vy = -vy;
-        if (inv[2]) vz = -vz;
-        if (inv[3]) va = -va;
+        // Apply hardcoded jog direction (CMD 0x20 bypasses firmware inversion)
+        vx *= JOG_DIRECTION[0];
+        vy *= JOG_DIRECTION[1];
+        vz *= JOG_DIRECTION[2];
+        va *= JOG_DIRECTION[3];
 
         // Calculate duration based on distance and feedRate
         const maxDist = Math.max(Math.abs(x), Math.abs(y), Math.abs(z), Math.abs(a));
