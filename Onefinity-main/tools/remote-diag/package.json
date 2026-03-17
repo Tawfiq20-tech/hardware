@@ -1,0 +1,14 @@
+{
+  "name": "rts-remote-diag",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote diagnostics tool for RTS-1 CNC controller — serial proxy + live monitor",
+  "scripts": {
+    "proxy": "node proxy-client.js",
+    "monitor": "node monitor-server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0",
+    "serialport": "^13.0.0"
+  }
+}
