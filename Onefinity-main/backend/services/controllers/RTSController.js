@@ -1079,12 +1079,21 @@ class RTSController extends EventEmitter {
             return Math.sign(dist) * vel;
         };
 
-        const vx = computeVel(x, 0);
-        const vy = computeVel(y, 1);
-        const vz = computeVel(z, 2);
-        const va = computeVel(a, 3);
+        let vx = computeVel(x, 0);
+        let vy = computeVel(y, 1);
+        let vz = computeVel(z, 2);
+        let va = computeVel(a, 3);
 
-        logger.info(`[RTS] Jog start: x=${x} y=${y} z=${z} feedRate=${feedRate} vel=[${vx.toFixed(1)},${vy.toFixed(1)},${vz.toFixed(1)},${va.toFixed(1)}]`);
+        // Apply axis inversion from firmware config — the firmware's inverted
+        // flags indicate motor direction is reversed, so jog velocity signs
+        // must be flipped to match the UI convention (Y- = move toward user)
+        const inv = this._firmwareConfig.inverted;
+        if (inv[0]) vx = -vx;
+        if (inv[1]) vy = -vy;
+        if (inv[2]) vz = -vz;
+        if (inv[3]) va = -va;
+
+        logger.info(`[RTS] Jog start: x=${x} y=${y} z=${z} feedRate=${feedRate} vel=[${vx.toFixed(1)},${vy.toFixed(1)},${vz.toFixed(1)},${va.toFixed(1)}] inv=[${inv}]`);
 
         // Send velocity jog
         this._sendJogFrame(vx, vy, vz, va);
