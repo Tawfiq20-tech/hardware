@@ -71,8 +71,8 @@ const MACHINE_STATE = {
     0x09: 'MotorError',  // Closed-loop motor error (from RTS-X)
 };
 
-// Motor reset command (from protocol analysis)
-const CMD_MOTOR_RESET = 0x0B; // Motor/alarm reset: 01 06 00 0B XX FF (XX = axis bitmask)
+// Unlock/reset command (from Wireshark capture: 01 06 00 81 58 FF = binary $X)
+const CMD_UNLOCK = 0x81;      // Unlock: 01 06 00 81 58 FF (0x58 = 'X' = $X equivalent)
 
 // Status polling interval (10Hz = 100ms)
 const STATUS_POLL_INTERVAL = 100;
@@ -1470,14 +1470,14 @@ class RTSController extends EventEmitter {
      * Unlock/clear alarm.
      */
     _unlock() {
-        logger.info('[RTS] Sending unlock — motor reset all + $X');
-        // Try binary motor reset first (RTS protocol)
-        this._motorResetAll();
-        // Also try $X as fallback
+        logger.info('[RTS] Sending unlock — binary $X (CMD 0x81)');
+        // Binary unlock from Wireshark: 01 06 00 81 58 FF
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
         this._writeAscii('$X\n');
         setTimeout(() => {
             if (this._activeState === 'Alarm' || this._activeState === 'MotorError') {
-                logger.info('[RTS] Still in alarm after reset, trying soft reset');
+                logger.info('[RTS] Still in alarm after unlock, trying soft reset');
                 this._writeAscii('\x18');
             }
         }, 500);
@@ -1493,16 +1493,18 @@ class RTSController extends EventEmitter {
      * @param {string} axis - 'X', 'Y', 'Z', or 'A'
      */
     _motorReset(axis) {
-        const axisMap = { X: 0, Y: 1, Z: 2, A: 3 };
-        const axisIdx = axisMap[String(axis).toUpperCase()];
-        if (axisIdx === undefined) return;
-        logger.info(`[RTS] Resetting motor: ${axis} (axis ${axisIdx})`);
-        // Try CMD 0x0B with axis index
-        this._writeFrame(Buffer.from([CMD_QUERY, CMD_MOTOR_RESET, axisIdx]));
-        // Also try soft reset character
+        const axisUpper = String(axis).toUpperCase();
+        logger.info(`[RTS] Resetting motor: ${axisUpper}`);
+        // Binary unlock command from Wireshark: 01 06 00 81 58 FF (= binary $X)
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
+        // Also send soft reset character as fallback
         this._writeAscii('\x18');
-        this.emit('console', `[RTS] Motor ${axis} reset sent`);
-        this.emit('motor:status', { axis: String(axis).toUpperCase(), status: 'reset' });
+        // Optimistically clear state
+        this._activeState = 'Idle';
+        this._updateStateObject();
+        this.emit('state', this.getState());
+        this.emit('console', `[RTS] Motor ${axisUpper} reset sent`);
+        this.emit('motor:status', { axis: axisUpper, status: 'reset' });
     }
 
     /**
@@ -1510,12 +1512,14 @@ class RTSController extends EventEmitter {
      */
     _motorResetAll() {
         logger.info('[RTS] Resetting all motors');
-        // Reset each axis
-        for (let i = 0; i < 4; i++) {
-            this._writeFrame(Buffer.from([CMD_QUERY, CMD_MOTOR_RESET, i]));
-        }
-        // Also send soft reset
+        // Binary unlock command from Wireshark: 01 06 00 81 58 FF (= binary $X)
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
+        // Send twice for reliability
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_UNLOCK, 0x58]));
+        // Also try ASCII $X and soft reset as fallbacks
+        this._writeAscii('$X\n');
         this._writeAscii('\x18');
+        // Optimistically clear state
         this._activeState = 'Idle';
         this._updateStateObject();
         this.emit('state', this.getState());
