@@ -14,7 +14,7 @@
  */
 const path = require('path');
 const { EventEmitter } = require('events');
-const { Connection, FIRMWARE_GRBL, FIRMWARE_RTS, FIRMWARE_GENERIC } = require('./Connection');
+const { Connection, FIRMWARE_GRBL, FIRMWARE_GENERIC } = require('./Connection');
 const { SerialConnection } = require('./SerialConnection');
 const { createController } = require('./controllers');
 const { createSessionLogger } = require('./SessionLogger');
@@ -373,65 +373,6 @@ class CNCEngine extends EventEmitter {
 
     _onFirmwareDetected(firmware, dataBuffer) {
         logger.info(`Firmware detected: ${firmware}`);
-
-        // For RTS firmware, switch the connection to rawMode if not already
-        if (firmware === FIRMWARE_RTS && this.connection && !this.connection.rawMode) {
-            logger.info('RTS firmware detected - reopening connection in raw binary mode');
-            const connPath = this.connection.path;
-            const connBaudRate = this.connection.baudRate;
-            const connNetwork = this.connection.network;
-            const connRtscts = this.connection.rtscts;
-            const sockets = { ...this.connection.sockets };
-
-            // Close existing connection
-            this.connection.close();
-
-            // Reopen in raw mode
-            this.connection = new Connection({
-                path: connPath,
-                baudRate: connBaudRate,
-                network: connNetwork,
-                rtscts: connRtscts,
-                rawMode: true,
-            });
-
-            // Re-register sockets
-            for (const socket of Object.values(sockets)) {
-                this.connection.addConnection(socket);
-            }
-
-            // Re-wire connection events
-            this.connection.on('error', (err) => {
-                logger.error(`Connection error: ${err?.message}`);
-                this.io.emit('serialport:error', { port: connPath, error: err?.message });
-            });
-            this.connection.on('close', () => {
-                this._onConnectionClose();
-            });
-
-            // Mark firmware as already detected so we don't re-detect
-            this.connection.firmwareDetected = true;
-            this.connection.controllerType = firmware;
-
-            // Open the raw connection
-            this.connection.open((err) => {
-                if (err) {
-                    logger.error(`Failed to reopen in raw mode: ${err.message}`);
-                    return;
-                }
-
-                // Create and bind controller
-                this.controller = createController(firmware);
-                this.controller.bind(this.connection);
-                this._wireControllerEvents();
-                this.io.emit('controller:type', firmware);
-
-                if (this.sessionLogger) {
-                    this.sessionLogger.logConnection(true, `Firmware: ${firmware} (raw binary mode)`);
-                }
-            });
-            return;
-        }
 
         // Create the appropriate controller
         this.controller = createController(firmware);

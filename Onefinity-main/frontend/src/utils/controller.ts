@@ -259,7 +259,7 @@ class Controller {
      */
     openPort(
         port: string,
-        options: { baudRate?: number; network?: boolean } = {},
+        options: { baudRate?: number; network?: boolean; rtscts?: boolean } = {},
         callback?: (err: Error | null) => void
     ): void {
         this.socket?.emit('open', port, options, callback);

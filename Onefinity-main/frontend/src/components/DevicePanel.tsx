@@ -28,8 +28,6 @@ export default function DevicePanel() {
         machineProfiles,
         activeMachineProfile,
         setActiveMachineProfile,
-        appPreferences,
-        ethernet,
     } = useCNCStore();
 
     const [availablePorts, setAvailablePorts] = useState<BackendPort[]>([]);
@@ -37,9 +35,6 @@ export default function DevicePanel() {
     const [isDropdownOpen, setIsDropdownOpen] = useState(false);
     const [isRefreshing, setIsRefreshing] = useState(false);
     const [error, setError] = useState<string | null>(null);
-    const [ipAddress, setIpAddress] = useState(() =>
-        (useCNCStore.getState().ethernet?.connectToIP ?? '').trim()
-    );
     // Local state for baud rate and flow control — avoids store sync bugs
     const [localBaudRate, setLocalBaudRate] = useState<number>(() =>
         useCNCStore.getState().appPreferences?.baudRate ?? 115200
@@ -68,12 +63,6 @@ export default function DevicePanel() {
     useEffect(() => {
         lastPositionUpdateRef.current = Date.now();
     }, [position, machinePosition]);
-
-    // Sync IP field from Home menu Ethernet when it loads and local field is empty
-    useEffect(() => {
-        const saved = ethernet?.connectToIP?.trim();
-        if (saved) setIpAddress((prev) => (prev.trim() ? prev : saved));
-    }, [ethernet?.connectToIP]);
 
     useEffect(() => {
         // Connect to backend Socket.IO on mount
@@ -108,7 +97,7 @@ export default function DevicePanel() {
             setAvailablePorts(ports);
 
             if (ports.length === 0) {
-                setError('No serial ports found. Check USB connections or enter an IP address.');
+                setError('No serial ports found. Check USB connection and power.');
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : 'Failed to load devices');
@@ -123,9 +112,9 @@ export default function DevicePanel() {
     };
 
     const handleConnect = async () => {
-        const portPath = selectedPort?.port || ipAddress.trim();
+        const portPath = selectedPort?.port;
         if (!portPath) {
-            setError('Please select a device or enter an IP address');
+            setError('Please select a serial port');
             return;
         }
         try {
@@ -342,7 +331,7 @@ export default function DevicePanel() {
                                         {availablePorts.length === 0 ? (
                                             <div className="dropdown-empty">
                                                 <p>No serial ports found</p>
-                                                <small>Check USB connections or use IP below</small>
+                                                <small>Check USB connection and power</small>
                                             </div>
                                         ) : (
                                             availablePorts.map((port, index) => (
@@ -373,28 +362,6 @@ export default function DevicePanel() {
                                     </div>
                                 )}
                             </div>
-                        </div>
-
-                        {/* Network Connection (IP Address) */}
-                        <div className="device-selector" style={{ marginTop: '8px' }}>
-                            <label className="device-label">Or enter IP address (network)</label>
-                            <input
-                                type="text"
-                                className="ip-input"
-                                placeholder="e.g. 192.168.1.100"
-                                value={ipAddress}
-                                onChange={(e) => setIpAddress(e.target.value)}
-                                disabled={connected}
-                                style={{
-                                    width: '100%',
-                                    padding: '8px 12px',
-                                    borderRadius: '6px',
-                                    border: '1px solid var(--border-ui)',
-                                    background: 'var(--bg-input)',
-                                    color: 'var(--text-main)',
-                                    fontSize: '13px',
-                                }}
-                            />
                         </div>
 
                         {/* Serial Settings: Baud Rate & Flow Control */}
@@ -467,7 +434,7 @@ export default function DevicePanel() {
                                 <button
                                     className={`connect-btn ${connectionStatus === 'connecting' ? 'connecting' : ''}`}
                                     onClick={handleConnect}
-                                    disabled={connectionStatus === 'connecting' || (!selectedPort && !ipAddress.trim()) || !backendSocketConnected}
+                                    disabled={connectionStatus === 'connecting' || !selectedPort || !backendSocketConnected}
                                 >
                                     {connectionStatus === 'connecting' ? (
                                         <>
@@ -498,7 +465,7 @@ export default function DevicePanel() {
                             <span className="status-text">
                                 {connectionStatus === 'disconnected' && 'Not Connected'}
                                 {connectionStatus === 'connecting' && 'Connecting...'}
-                                {connectionStatus === 'connected' && `Connected to ${selectedPort ? getPortDisplayName(selectedPort) : ipAddress}`}
+                                {connectionStatus === 'connected' && `Connected to ${selectedPort ? getPortDisplayName(selectedPort) : 'device'}`}
                                 {connectionStatus === 'error' && 'Connection Error'}
                             </span>
                         </div>
@@ -510,12 +477,11 @@ export default function DevicePanel() {
                                 <details style={{ marginTop: '8px', fontSize: '12px', opacity: 0.8 }}>
                                     <summary>Troubleshooting Tips</summary>
                                     <ul style={{ marginTop: '4px', paddingLeft: '16px' }}>
-                                        <li>Ensure your CNC controller is powered on and connected via USB (or reachable at the IP for network)</li>
-                                        <li>Close other CNC software (UGS, bCNC, Candle, etc.) that may be using the port</li>
+                                        <li>Ensure your CNC controller is powered on and connected via USB</li>
+                                        <li>Close other CNC software (UGS, bCNC, Candle, RTS-X, etc.) that may be using the port</li>
                                         <li>Try unplugging and reconnecting the USB cable</li>
                                         <li>Check if the device appears in Windows Device Manager (Ports)</li>
                                         <li>Start the backend server (port 4000) and ensure no firewall is blocking it</li>
-                                        <li>For network: use the IP from Home → Ethernet, and ensure the controller has Telnet/port 23 open</li>
                                     </ul>
                                 </details>
                             </div>
@@ -626,7 +592,7 @@ export default function DevicePanel() {
                                 <li>Make sure your CNC controller is connected via USB</li>
                                 <li>Close other applications using the serial port (UGS, bCNC, etc.)</li>
                                 <li>Supported controllers: GRBL, grblHAL, RTS/Buildbotics</li>
-                                <li>For network connections, enter the controller's IP address</li>
+                                <li>Supported controllers: GRBL, grblHAL, FluidNC, RTS-1/RTS-2</li>
                             </ul>
                         </div>
                     </div>
