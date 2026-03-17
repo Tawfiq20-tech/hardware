@@ -26,6 +26,7 @@ const CMD_JOG = 0x20;         // Jog: 01 19 00 20 [4xF32] [4 zeros] FF
 const CMD_GCODE_MODE = 0x40;  // G-code mode: 01 09 00 40 3E [ASCII] FF
 const CMD_WRITE_REG = 0x82;   // Write register: 01 0B 00 82 XX YY VV VV VV VV FF
 const CMD_HOME = 0x0A;        // Home command: 01 06 00 0A 01 FF (from Wireshark capture)
+const CMD_JOG_MODE = 0x10;    // Jog mode enable/disable: 01 06 00 10 01/00 FF (from Wireshark capture)
 
 // Response type bytes (device -> host)
 const RESP_FIRMWARE = 0x01;   // Firmware version response
@@ -253,6 +254,12 @@ class RTSController extends EventEmitter {
             this._activeState = 'Alarm';
             this._stopPolling();
             this._clearInitTimer();
+            // Clean up any active jog timer (don't write to closed connection)
+            if (this._jogStopTimer) {
+                clearTimeout(this._jogStopTimer);
+                this._jogStopTimer = null;
+            }
+            this._jogTarget = null;
             this.emit('close');
         });
 
@@ -1054,14 +1061,12 @@ class RTSController extends EventEmitter {
         // Cancel any active jog
         this._cancelActiveJog();
 
-        // Use binary velocity jog with calculated duration for exact step size
-        // Duration = distance / velocity (mm/min → mm/ms)
+        // Velocity scaling from firmware config
         const maxVel = this._firmwareConfig.max_velocity;
         const computeVel = (dist, axisIdx) => {
             if (dist === 0) return 0;
             const axisMax = maxVel[axisIdx] || 15240;
             const scaled = (feedRate / axisMax) * 254;
-            // For small steps (< 1mm), use lower velocity for accuracy
             const distFactor = Math.abs(dist) < 1 ? Math.max(0.3, Math.abs(dist)) : 1;
             const vel = Math.max(1, Math.min(scaled * distFactor, 500));
             return Math.sign(dist) * vel;
@@ -1080,20 +1085,34 @@ class RTSController extends EventEmitter {
         if (inv[3]) va = -va;
 
         // Calculate duration based on distance and feedRate
-        // feedRate is mm/min, convert to mm/ms: feedRate / 60000
         const maxDist = Math.max(Math.abs(x), Math.abs(y), Math.abs(z), Math.abs(a));
         const durationMs = Math.max(100, (maxDist / (feedRate / 60000)));
 
         logger.info(`[RTS] Jog step: dist=${maxDist}mm feedRate=${feedRate}mm/min vel=[${vx.toFixed(1)},${vy.toFixed(1)},${vz.toFixed(1)},${va.toFixed(1)}] duration=${durationMs.toFixed(0)}ms`);
 
-        // Send velocity jog with feedRate
-        this._sendJogFrame(vx, vy, vz, va, feedRate);
+        try {
+            // === RTS-X Jog Protocol (from Wireshark capture) ===
+            // Step 1: Enable jog mode (CMD 0x10 val=0x01)
+            this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x01]));
 
-        // Stop after calculated duration
-        this._jogStopTimer = setTimeout(() => {
-            this._sendJogFrame(0, 0, 0, 0, feedRate);
-            logger.info('[RTS] Jog step complete — velocity zeroed');
-        }, durationMs);
+            // Step 2: Send velocity jog frame with feedRate
+            this._sendJogFrame(vx, vy, vz, va, feedRate);
+
+            // Step 3: Stop after calculated duration
+            this._jogStopTimer = setTimeout(() => {
+                try {
+                    // Send zero velocity
+                    this._sendJogFrame(0, 0, 0, 0, feedRate);
+                    // Disable jog mode (CMD 0x10 val=0x00)
+                    this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
+                    logger.info('[RTS] Jog step complete — velocity zeroed, jog mode disabled');
+                } catch (err) {
+                    logger.error(`[RTS] Error stopping jog: ${err.message}`);
+                }
+            }, durationMs);
+        } catch (err) {
+            logger.error(`[RTS] Error starting jog: ${err.message}`);
+        }
     }
 
     /**
@@ -1129,18 +1148,17 @@ class RTSController extends EventEmitter {
             clearTimeout(this._jogStopTimer);
             this._jogStopTimer = null;
         }
-        if (this._jogTarget) {
-            this._jogTarget = null;
-            this._sendJogFrame(0, 0, 0, 0);
-        }
+        // Always send zero velocity + disable jog mode to ensure clean stop
+        this._sendJogFrame(0, 0, 0, 0);
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
+        this._jogTarget = null;
     }
 
     /**
-     * Cancel active jog (send zero velocity jog).
+     * Cancel active jog (send zero velocity + disable jog mode).
      */
     _jogCancel() {
         this._cancelActiveJog();
-        this._sendJogFrame(0, 0, 0, 0);
     }
 
     /**
@@ -1247,8 +1265,8 @@ class RTSController extends EventEmitter {
      * Feed hold (pause motion).
      */
     _feedHold() {
-        // Send zero-velocity jog to stop motion
-        this._sendJogFrame(0, 0, 0, 0);
+        // Send zero-velocity jog + disable jog mode to stop motion cleanly
+        this._cancelActiveJog();
         this._activeState = 'Hold';
         this._updateStateObject();
         this.emit('state', this.getState());
