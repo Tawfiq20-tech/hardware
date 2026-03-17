@@ -386,10 +386,14 @@ class SerialConnection extends EventEmitter {
      * @param {object} [context] - Optional context passed to the writeFilter
      */
     write(data, context) {
-        if (!this.port) return;
+        if (!this.port || !this.port.isOpen) return;
 
         const filtered = this.writeFilter(data, context);
-        this.port.write(Buffer.from(filtered));
+        this.port.write(Buffer.from(filtered), (err) => {
+            if (err) {
+                console.error('[SerialConnection] Write error:', err.message);
+            }
+        });
     }
 
     /**
@@ -400,8 +404,13 @@ class SerialConnection extends EventEmitter {
      * @param {string|Buffer} data - Raw data to send immediately
      */
     writeImmediate(data) {
-        if (!this.port) return;
-        this.port.write(data);
+        if (!this.port || !this.port.isOpen) return;
+        this.port.write(data, (err) => {
+            if (err) {
+                // Log but don't throw — prevents unhandled error from killing connection
+                console.error('[SerialConnection] Write error:', err.message);
+            }
+        });
     }
 
     /**

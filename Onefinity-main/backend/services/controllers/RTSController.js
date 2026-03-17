@@ -896,7 +896,7 @@ class RTSController extends EventEmitter {
         }
         this._writing = true;
         const data = this._writeQueue.shift();
-        if (!this.connection) {
+        if (!this.connection || !this.connection.isOpen) {
             this._writing = false;
             this._writeQueue = [];
             return;
