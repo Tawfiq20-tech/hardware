@@ -157,6 +157,9 @@ class RTSController extends EventEmitter {
         /** @type {string|null} Which axis is being homed (null = all) */
         this._homingAxis = null;
 
+        /** @type {string[]} Queue of axes remaining to home */
+        this._homingQueue = [];
+
         // ─── Machine State ──────────────────────────────────────────
 
         /** @type {string} Current machine state for UI */
@@ -1237,34 +1240,31 @@ class RTSController extends EventEmitter {
     }
 
     /**
-     * Home all axes using firmware $H command.
-     * Tracks homing state and updates position on completion.
+     * Home all axes sequentially (X → Y → Z).
+     *
+     * From Wireshark capture of RTS-X software:
+     *   1. Send homing command: 01 06 00 0A 01 FF (twice)
+     *   2. Board enters homing state (state=0x08, flags=0x01)
+     *   3. After ~400ms, send CMD 0x10 val=0x00, then a MOVE frame
+     *      to drive the axis toward its limit switch
+     *   4. Board moves until switch triggers → zeros position → returns to idle
+     *   5. Repeat for next axis
+     *
+     * The host MUST send the seek move — the board won't move on its own.
      */
     _home() {
-        logger.info('[RTS] Starting auto-home (all axes) — uses limit switches');
+        logger.info('[RTS] Starting auto-home (all axes) — sequential X→Y→Z');
         this._homing = true;
         this._homingAxis = null;
-        // Binary homing command from Wireshark capture: 01 06 00 0A 01 FF
-        // Send twice for reliability (as observed in RTS-X protocol)
-        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
-        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
         this.emit('homing:location', { location: 'all', status: 'started' });
-        this.emit('console', '[RTS] Homing all axes (limit switch detection)...');
+        this.emit('console', '[RTS] Homing all axes (X → Y → Z)...');
 
-        // Homing timeout — if not complete within 60s, likely a limit switch issue
-        this._homingTimer = setTimeout(() => {
-            if (this._homing) {
-                this._homing = false;
-                this._homingAxis = null;
-                logger.error('[RTS] Homing timeout — check limit switches');
-                this.emit('alarm', { code: 0x03, message: 'Homing timeout — check limit switches are connected and working' });
-                this.emit('console', '[RTS] HOMING TIMEOUT — limit switch not triggered. Check wiring.');
-                this.emit('homing:location', { location: 'all', status: 'failed' });
-            }
-        }, 60000);
+        // Home axes sequentially: X first, then Y, then Z
+        this._homingQueue = ['X', 'Y', 'Z'];
+        this._startNextAxisHome();
     }
 
     /**
@@ -1280,30 +1280,113 @@ class RTSController extends EventEmitter {
         logger.info(`[RTS] Starting auto-home (${axisUpper} axis)`);
         this._homing = true;
         this._homingAxis = axisUpper;
-        // Binary homing command: 01 06 00 0A <axis_byte> FF
-        // 0x01 = all axes (from capture), individual axes TBD
-        // For now, send home-all for any axis request
-        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
-        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
         this.emit('homing:location', { location: axisUpper, status: 'started' });
         this.emit('console', `[RTS] Homing ${axisUpper} axis...`);
+
+        this._homingQueue = [axisUpper];
+        this._startNextAxisHome();
+    }
+
+    /**
+     * Start homing the next axis in the queue.
+     * Called initially and after each axis completes.
+     */
+    _startNextAxisHome() {
+        if (!this._homingQueue || this._homingQueue.length === 0) {
+            // All axes homed
+            this._onHomingComplete();
+            return;
+        }
+
+        const axis = this._homingQueue.shift();
+        this._homingAxis = axis;
+        const axisIdx = { X: 0, Y: 1, Z: 2, A: 3 }[axis];
+
+        logger.info(`[RTS] Homing ${axis} axis — sending homing command + seek move`);
+        this.emit('console', `[RTS] Homing ${axis} axis...`);
+
+        // Step 1: Send homing command (twice for reliability, as in RTS-X capture)
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
+
+        // Step 2: After 400ms, send the seek move toward the limit switch
+        // (matches RTS-X timing from Wireshark: homing cmd at t=0, move at t+0.425s)
+        setTimeout(() => {
+            if (!this._homing) return; // Cancelled
+
+            // Send CMD 0x10 val=0x00 (queue/line init, as seen in capture)
+            this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
+
+            // Build seek move: drive axis toward limit switch at 2000 mm/min
+            // RTS-X uses -(max_travel - 5) as the seek distance
+            const maxTravel = this._firmwareConfig.max_travel;
+            const seekDistance = -(Math.abs(maxTravel[axisIdx]) + 10); // Overshoot to ensure switch hit
+
+            const payload = Buffer.alloc(22);
+            payload[0] = CMD_QUERY;
+            payload[1] = CMD_JOG;
+            // Set only the axis being homed, others = 0
+            payload.writeFloatLE(axisIdx === 0 ? seekDistance : 0, 2);  // X
+            payload.writeFloatLE(axisIdx === 1 ? seekDistance : 0, 6);  // Y
+            payload.writeFloatLE(axisIdx === 2 ? seekDistance : 0, 10); // Z
+            payload.writeFloatLE(axisIdx === 3 ? seekDistance : 0, 14); // A
+            payload.writeFloatLE(2000.0, 18); // Feed rate (from capture)
+            this._writeFrame(payload);
+
+            logger.info(`[RTS] Sent homing seek move: ${axis}=${seekDistance.toFixed(0)} feed=2000`);
+        }, 400);
+
+        // Homing timeout per axis — 60s should be plenty
+        if (this._homingTimer) clearTimeout(this._homingTimer);
+        this._homingTimer = setTimeout(() => {
+            if (this._homing) {
+                this._homing = false;
+                this._homingAxis = null;
+                this._homingQueue = [];
+                logger.error(`[RTS] Homing timeout on ${axis} — check limit switches`);
+                this.emit('alarm', { code: 0x03, message: `Homing timeout on ${axis} — check limit switches are connected and working` });
+                this.emit('console', `[RTS] HOMING TIMEOUT on ${axis} — limit switch not triggered. Check wiring.`);
+                this.emit('homing:location', { location: axis, status: 'failed' });
+            }
+        }, 60000);
     }
 
     /**
      * Called when homing completes (state transitions from Home to Idle).
-     * Requests fresh position data and resets work coordinates.
+     * If more axes are queued, starts the next one. Otherwise finishes.
      */
     _onHomingComplete() {
+        if (this._homingTimer) {
+            clearTimeout(this._homingTimer);
+            this._homingTimer = null;
+        }
+
         const axis = this._homingAxis || 'all';
+        logger.info(`[RTS] Homing complete for ${axis}`);
+        this.emit('console', `[RTS] ${axis} axis homed — position zeroed`);
+
+        // Check if more axes to home
+        if (this._homingQueue && this._homingQueue.length > 0) {
+            // Short delay before homing next axis (let board settle)
+            setTimeout(() => {
+                if (this._homing) {
+                    this._startNextAxisHome();
+                }
+            }, 500);
+            return;
+        }
+
+        // All axes done
         this._homing = false;
         this._homingAxis = null;
+        this._homingQueue = [];
 
-        logger.info(`[RTS] Homing complete (${axis})`);
-        this.emit('homing:location', { location: axis, status: 'completed' });
-        this.emit('console', `[RTS] Homing ${axis} complete — position updated`);
+        logger.info('[RTS] All homing complete');
+        this.emit('homing:location', { location: 'all', status: 'completed' });
+        this.emit('console', '[RTS] Homing complete — all axes zeroed');
 
         // Request fresh status to update position
         this._sendQueryFrame(REG_STATUS);
