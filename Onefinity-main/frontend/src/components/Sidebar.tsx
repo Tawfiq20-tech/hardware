@@ -457,6 +457,42 @@ export default function Sidebar() {
                 {/* ──── Tab Content: Jog ──── */}
                 {settingsTab === 'Jog' && (
                     <div className="sidebar-section" style={{ borderBottom: 'none' }}>
+                        {/* Alarm Banner */}
+                        {useCNCStore.getState().machineState === 'alarm' && (
+                            <div style={{
+                                background: 'rgba(220, 50, 50, 0.15)',
+                                border: '1px solid rgba(220, 50, 50, 0.4)',
+                                borderRadius: '6px',
+                                padding: '8px 12px',
+                                marginBottom: '8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: '8px',
+                            }}>
+                                <span style={{ color: '#ff6b6b', fontWeight: 700, fontSize: '12px' }}>
+                                    ALARM — Machine locked
+                                </span>
+                                <button
+                                    onClick={() => {
+                                        import('../utils/backendConnection').then(m => m.backendUnlock());
+                                        addConsoleLog('info', 'Sending unlock ($X)...');
+                                    }}
+                                    style={{
+                                        background: '#dc3232',
+                                        color: '#fff',
+                                        border: 'none',
+                                        borderRadius: '4px',
+                                        padding: '4px 12px',
+                                        fontSize: '11px',
+                                        fontWeight: 700,
+                                        cursor: 'pointer',
+                                    }}
+                                >
+                                    CLEAR ALARM
+                                </button>
+                            </div>
+                        )}
                         <span className="section-label">Manual Jog Control</span>
 
                         <div className="jog-grid">

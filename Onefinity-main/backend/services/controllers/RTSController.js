@@ -99,6 +99,9 @@ class RTSController extends EventEmitter {
         /** @type {NodeJS.Timeout|null} Jog stop timer for step jogs */
         this._jogStopTimer = null;
 
+        /** @type {object|null} Active jog target for position monitoring */
+        this._jogTarget = null;
+
         /** @type {boolean} Whether we received the initial idle message */
         this._gotIdleMsg = false;
 
@@ -566,6 +569,9 @@ class RTSController extends EventEmitter {
             }
         }
 
+        // Check if step jog has reached target distance
+        this._checkJogTarget();
+
         // Complete init if not done yet (first status = board is alive)
         if (!this._initialized) {
             this._completeInit();
@@ -938,12 +944,19 @@ class RTSController extends EventEmitter {
     // ═══════════════════════════════════════════════════════════════════════
 
     /**
-     * Send a jog command using the binary velocity jog protocol.
-     * The frontend sends distance-based params (e.g. x=1 means move 1mm).
-     * We convert to a velocity pulse: send velocity, wait for distance, send stop.
+     * Send a jog command using position-monitored binary velocity jog.
      *
-     * Velocity = feedRate (mm/min) converted to the RTS velocity scale.
-     * Duration = distance / velocity.
+     * The frontend sends distance-based params (e.g. x=1 means move 1mm).
+     * We use closed-loop control:
+     *   1. Record start position
+     *   2. Send velocity jog (binary frame 0x20)
+     *   3. Monitor B0 position updates (10Hz)
+     *   4. When distance reached, send zero velocity to stop
+     *
+     * RTS velocity scale (from captures):
+     *   1.0  = slow normalized jog
+     *   100.0 = medium speed
+     *   Velocity is NOT in mm/s — it's an internal scale
      *
      * @param {object} params - {x, y, z, a, feedRate}
      */
@@ -952,55 +965,88 @@ class RTSController extends EventEmitter {
 
         if (x === 0 && y === 0 && z === 0 && a === 0) return;
 
-        // Cancel any pending jog stop timer
+        // Cancel any active jog
+        this._cancelActiveJog();
+
+        // Record start position for distance monitoring
+        this._jogTarget = {
+            startX: this._mpos.x,
+            startY: this._mpos.y,
+            startZ: this._mpos.z,
+            startA: this._mpos.a,
+            distX: Math.abs(x),
+            distY: Math.abs(y),
+            distZ: Math.abs(z),
+            distA: Math.abs(a),
+        };
+
+        // Map feedRate (mm/min) to RTS velocity scale
+        // From captures: max_velocity X/Y = 15240 mm/min maps to ~254 mm/s
+        // RTS velocity 100.0 appears to be a moderate speed
+        // Scale: velocity = feedRate * 100 / max_velocity ≈ feedRate / 150
+        const vel = Math.max(1, Math.min(feedRate / 10, 500));
+
+        const vx = x !== 0 ? Math.sign(x) * vel : 0;
+        const vy = y !== 0 ? Math.sign(y) * vel : 0;
+        const vz = z !== 0 ? Math.sign(z) * vel : 0;
+        const va = a !== 0 ? Math.sign(a) * vel : 0;
+
+        logger.info(`[RTS] Jog start: x=${x} y=${y} z=${z} vel=${vel} feedRate=${feedRate}`);
+
+        // Send velocity jog
+        this._sendJogFrame(vx, vy, vz, va);
+
+        // Safety timeout: stop after 5 seconds max regardless
+        this._jogStopTimer = setTimeout(() => {
+            this._cancelActiveJog();
+            logger.warn('[RTS] Jog safety timeout - stopping');
+        }, 5000);
+    }
+
+    /**
+     * Check if active jog has reached target distance.
+     * Called from _handleStatusFrame on each B0 position update (10Hz).
+     */
+    _checkJogTarget() {
+        if (!this._jogTarget) return;
+
+        const t = this._jogTarget;
+        const movedX = Math.abs(this._mpos.x - t.startX);
+        const movedY = Math.abs(this._mpos.y - t.startY);
+        const movedZ = Math.abs(this._mpos.z - t.startZ);
+        const movedA = Math.abs(this._mpos.a - t.startA);
+
+        // Check if all requested axes have reached their target
+        const xDone = t.distX === 0 || movedX >= t.distX;
+        const yDone = t.distY === 0 || movedY >= t.distY;
+        const zDone = t.distZ === 0 || movedZ >= t.distZ;
+        const aDone = t.distA === 0 || movedA >= t.distA;
+
+        if (xDone && yDone && zDone && aDone) {
+            logger.info(`[RTS] Jog target reached: moved X=${movedX.toFixed(2)} Y=${movedY.toFixed(2)} Z=${movedZ.toFixed(2)}`);
+            this._cancelActiveJog();
+        }
+    }
+
+    /**
+     * Cancel active jog — send zero velocity and clear tracking.
+     */
+    _cancelActiveJog() {
         if (this._jogStopTimer) {
             clearTimeout(this._jogStopTimer);
             this._jogStopTimer = null;
         }
-
-        // Calculate the max distance requested across axes
-        const maxDist = Math.max(Math.abs(x), Math.abs(y), Math.abs(z), Math.abs(a));
-        if (maxDist === 0) return;
-
-        // Jog velocity in mm/min (feedRate), convert to mm/s
-        const velocityMmPerSec = feedRate / 60;
-
-        // Duration to hold the jog (seconds) = distance / velocity
-        const durationSec = maxDist / velocityMmPerSec;
-        const durationMs = Math.max(20, Math.min(durationSec * 1000, 10000));
-
-        // RTS velocity scale: the float values represent velocity in the board's
-        // internal units. From captures, values around 50-200 are typical speeds.
-        // Scale: feedRate mm/min maps to velocity value
-        const scale = feedRate / 60; // mm/s as the velocity value
-
-        // Direction vectors (normalized to -1/+1, scaled by velocity)
-        const vx = x !== 0 ? Math.sign(x) * scale : 0;
-        const vy = y !== 0 ? Math.sign(y) * scale : 0;
-        const vz = z !== 0 ? Math.sign(z) * scale : 0;
-        const va = a !== 0 ? Math.sign(a) * scale : 0;
-
-        logger.info(`[RTS] Jog: dist=${maxDist}mm vel=${scale}mm/s dur=${durationMs.toFixed(0)}ms vx=${vx} vy=${vy} vz=${vz}`);
-
-        // Send velocity jog frame
-        this._sendJogFrame(vx, vy, vz, va);
-
-        // Schedule stop after calculated duration
-        this._jogStopTimer = setTimeout(() => {
-            this._jogStopTimer = null;
+        if (this._jogTarget) {
+            this._jogTarget = null;
             this._sendJogFrame(0, 0, 0, 0);
-            logger.info('[RTS] Jog stop sent');
-        }, durationMs);
+        }
     }
 
     /**
      * Cancel active jog (send zero velocity jog).
      */
     _jogCancel() {
-        if (this._jogStopTimer) {
-            clearTimeout(this._jogStopTimer);
-            this._jogStopTimer = null;
-        }
+        this._cancelActiveJog();
         this._sendJogFrame(0, 0, 0, 0);
     }
 
@@ -1018,7 +1064,20 @@ class RTSController extends EventEmitter {
      * Unlock/clear alarm.
      */
     _unlock() {
+        logger.info('[RTS] Sending unlock ($X)');
         this._writeAscii('$X\n');
+        // Also try soft reset in case $X doesn't work
+        setTimeout(() => {
+            if (this._activeState === 'Alarm') {
+                logger.info('[RTS] Still in alarm after $X, trying soft reset');
+                this._writeAscii('\x18');
+            }
+        }, 500);
+        // Optimistically update state — will be corrected by next B0 poll
+        this._activeState = 'Idle';
+        this._updateStateObject();
+        this.emit('state', this.getState());
+        this.emit('status', this.state.status);
     }
 
     /**
