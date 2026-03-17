@@ -1052,23 +1052,46 @@ class RTSController extends EventEmitter {
         // Cancel any active jog
         this._cancelActiveJog();
 
-        // Use G-code incremental move for exact step size
-        // G91 = relative mode, G1 = linear move at feedRate
-        const axes = [];
-        if (x !== 0) axes.push(`X${x}`);
-        if (y !== 0) axes.push(`Y${y}`);
-        if (z !== 0) axes.push(`Z${z}`);
-        if (a !== 0) axes.push(`A${a}`);
+        // Use binary velocity jog with calculated duration for exact step size
+        // Duration = distance / velocity (mm/min → mm/ms)
+        const maxVel = this._firmwareConfig.max_velocity;
+        const computeVel = (dist, axisIdx) => {
+            if (dist === 0) return 0;
+            const axisMax = maxVel[axisIdx] || 15240;
+            const scaled = (feedRate / axisMax) * 254;
+            // For small steps (< 1mm), use lower velocity for accuracy
+            const distFactor = Math.abs(dist) < 1 ? Math.max(0.3, Math.abs(dist)) : 1;
+            const vel = Math.max(1, Math.min(scaled * distFactor, 500));
+            return Math.sign(dist) * vel;
+        };
 
-        const cmd = `G91 G1 ${axes.join(' ')} F${feedRate}`;
-        logger.info(`[RTS] Jog step: ${cmd}`);
+        let vx = computeVel(x, 0);
+        let vy = computeVel(y, 1);
+        let vz = computeVel(z, 2);
+        let va = computeVel(a, 3);
 
-        this._writeAscii(cmd + '\n');
+        // Apply axis inversion from firmware config
+        const inv = this._firmwareConfig.inverted;
+        if (inv[0]) vx = -vx;
+        if (inv[1]) vy = -vy;
+        if (inv[2]) vz = -vz;
+        if (inv[3]) va = -va;
 
-        // Return to absolute mode after a short delay
+        // Calculate duration based on distance and feedRate
+        // feedRate is mm/min, convert to mm/ms: feedRate / 60000
+        const maxDist = Math.max(Math.abs(x), Math.abs(y), Math.abs(z), Math.abs(a));
+        const durationMs = Math.max(100, (maxDist / (feedRate / 60000)));
+
+        logger.info(`[RTS] Jog step: dist=${maxDist}mm feedRate=${feedRate}mm/min vel=[${vx.toFixed(1)},${vy.toFixed(1)},${vz.toFixed(1)},${va.toFixed(1)}] duration=${durationMs.toFixed(0)}ms`);
+
+        // Send velocity jog
+        this._sendJogFrame(vx, vy, vz, va);
+
+        // Stop after calculated duration
         this._jogStopTimer = setTimeout(() => {
-            this._writeAscii('G90\n');
-        }, 200);
+            this._sendJogFrame(0, 0, 0, 0);
+            logger.info('[RTS] Jog step complete — velocity zeroed');
+        }, durationMs);
     }
 
     /**
@@ -1111,13 +1134,11 @@ class RTSController extends EventEmitter {
     }
 
     /**
-     * Cancel active jog (send zero velocity jog + feed hold).
+     * Cancel active jog (send zero velocity jog).
      */
     _jogCancel() {
         this._cancelActiveJog();
         this._sendJogFrame(0, 0, 0, 0);
-        // Also send feed hold to stop any in-progress G1 move
-        this._writeAscii('!\n');
     }
 
     /**
