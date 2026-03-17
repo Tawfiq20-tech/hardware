@@ -117,6 +117,15 @@ class RTSController extends EventEmitter {
         /** @type {object|null} Active jog target for position monitoring */
         this._jogTarget = null;
 
+        /** @type {boolean} Whether jogging is active (suppresses polling) */
+        this._jogActive = false;
+
+        /** @type {boolean} Whether a write is in progress (serializes writes) */
+        this._writing = false;
+
+        /** @type {Array} Pending write queue */
+        this._writeQueue = [];
+
         /** @type {boolean} Whether we received the initial idle message */
         this._gotIdleMsg = false;
 
@@ -260,6 +269,9 @@ class RTSController extends EventEmitter {
                 this._jogStopTimer = null;
             }
             this._jogTarget = null;
+            this._jogActive = false;
+            this._writing = false;
+            this._writeQueue = [];
             this.emit('close');
         });
 
@@ -469,8 +481,12 @@ class RTSController extends EventEmitter {
             const frame = this._rxBuffer.slice(0, frameLen);
             this._rxBuffer = this._rxBuffer.slice(frameLen);
 
-            // Process the frame
-            this._handleFrame(frame);
+            // Process the frame (try-catch prevents parser crash from killing connection)
+            try {
+                this._handleFrame(frame);
+            } catch (err) {
+                logger.error(`[RTS] Error handling frame ${frame.toString('hex')}: ${err.message}`);
+            }
         }
     }
 
@@ -835,13 +851,52 @@ class RTSController extends EventEmitter {
         frame[totalLen - 1] = FRAME_END;
 
         if (this.connection) {
-            this.connection.writeRaw(frame);
-            logger.debug(`[RTS TX] ${frame.toString('hex')}`);
+            this._enqueueWrite(frame);
         } else {
             logger.warn('[RTS] Cannot write frame - no connection');
         }
 
         return frame;
+    }
+
+    /**
+     * Enqueue a raw buffer for serialized writing.
+     * Prevents concurrent writes that corrupt the USB serial stream.
+     */
+    _enqueueWrite(data) {
+        this._writeQueue.push(data);
+        if (!this._writing) {
+            this._drainQueue();
+        }
+    }
+
+    /**
+     * Drain the write queue one frame at a time.
+     * Waits for the serial port 'drain' event before sending the next frame.
+     */
+    _drainQueue() {
+        if (this._writeQueue.length === 0) {
+            this._writing = false;
+            return;
+        }
+        this._writing = true;
+        const data = this._writeQueue.shift();
+        if (!this.connection) {
+            this._writing = false;
+            this._writeQueue = [];
+            return;
+        }
+        try {
+            this.connection.writeRaw(data);
+            logger.debug(`[RTS TX] ${data.toString('hex')}`);
+            // Use setImmediate to yield to event loop between writes
+            // This prevents flooding the USB buffer
+            setImmediate(() => this._drainQueue());
+        } catch (err) {
+            logger.error(`[RTS] Write error: ${err.message}`);
+            this._writing = false;
+            this._writeQueue = [];
+        }
     }
 
     /**
@@ -929,6 +984,8 @@ class RTSController extends EventEmitter {
     _startPolling() {
         this._stopPolling();
         this._pollTimer = setInterval(() => {
+            // Skip polling while jogging to prevent concurrent writes
+            if (this._jogActive) return;
             this._sendQueryFrame(REG_STATUS);
         }, STATUS_POLL_INTERVAL);
         logger.info('[RTS] Status polling started at 10Hz');
@@ -1091,6 +1148,9 @@ class RTSController extends EventEmitter {
         logger.info(`[RTS] Jog step: dist=${maxDist}mm feedRate=${feedRate}mm/min vel=[${vx.toFixed(1)},${vy.toFixed(1)},${vz.toFixed(1)},${va.toFixed(1)}] duration=${durationMs.toFixed(0)}ms`);
 
         try {
+            // Suppress status polling during jog to prevent concurrent writes
+            this._jogActive = true;
+
             // === RTS-X Jog Protocol (from Wireshark capture) ===
             // Step 1: Enable jog mode (CMD 0x10 val=0x01)
             this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x01]));
@@ -1105,13 +1165,16 @@ class RTSController extends EventEmitter {
                     this._sendJogFrame(0, 0, 0, 0, feedRate);
                     // Disable jog mode (CMD 0x10 val=0x00)
                     this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
+                    this._jogActive = false;
                     logger.info('[RTS] Jog step complete — velocity zeroed, jog mode disabled');
                 } catch (err) {
                     logger.error(`[RTS] Error stopping jog: ${err.message}`);
+                    this._jogActive = false;
                 }
             }, durationMs);
         } catch (err) {
             logger.error(`[RTS] Error starting jog: ${err.message}`);
+            this._jogActive = false;
         }
     }
 
@@ -1152,6 +1215,7 @@ class RTSController extends EventEmitter {
         this._sendJogFrame(0, 0, 0, 0);
         this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
         this._jogTarget = null;
+        this._jogActive = false;
     }
 
     /**
