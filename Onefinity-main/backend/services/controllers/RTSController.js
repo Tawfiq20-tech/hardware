@@ -1321,9 +1321,9 @@ class RTSController extends EventEmitter {
             this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
 
             // Build seek move: drive axis toward limit switch at 2000 mm/min
-            // RTS-X uses -(max_travel - 5) as the seek distance
+            // Direction is positive (limit switches at max travel end)
             const maxTravel = this._firmwareConfig.max_travel;
-            const seekDistance = -(Math.abs(maxTravel[axisIdx]) + 10); // Overshoot to ensure switch hit
+            const seekDistance = Math.abs(maxTravel[axisIdx]) + 10; // Positive = toward switch
 
             const payload = Buffer.alloc(22);
             payload[0] = CMD_QUERY;
