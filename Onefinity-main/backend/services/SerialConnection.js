@@ -325,6 +325,12 @@ class SerialConnection extends EventEmitter {
             // Pipe through ReadlineParser for line-based data events
             this.parser = this.port.pipe(new ReadlineParser({ delimiter: '\n' }));
             this.parser.on('data', this._eventListeners.data);
+
+            // ALSO emit raw data for binary firmware detection (RTS boards send
+            // binary frames with no newlines, which ReadlineParser never emits)
+            this.port.on('data', (buf) => {
+                this.emit('rawData', buf);
+            });
         }
     }
 

@@ -105,6 +105,9 @@ class Connection extends EventEmitter {
             this.connection.on('data', (data) => this._onRawData(data));
         } else {
             this.connection.on('data', (data) => this._onData(data));
+            // ALSO listen for raw data to detect binary RTS firmware
+            // (RTS boards send binary frames with no newlines, ReadlineParser won't emit them)
+            this.connection.on('rawData', (data) => this._onRawData(data));
         }
         this.connection.on('open', () => this._onOpen());
         this.connection.on('close', (err) => this._onClose(err));
@@ -416,14 +419,21 @@ class Connection extends EventEmitter {
         }
 
         if (attempt === 0) {
-            // First attempt: wait for board to boot, then send both probes
-            // RTS/Buildbotics boards need time after port opens
+            // First attempt: wait for board to boot, then send probes
+            // RTS boards send unsolicited idle message (01 05 C1 00 FF) within ~500ms
+            // Also send binary RTS register query to trigger a response
             setTimeout(() => {
                 if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
-                    // Send Buildbotics dump command first (single char, most likely to get a response)
+                    // Send binary RTS register query (machine config 0x09)
+                    this.connection.writeImmediate(Buffer.from([0x01, 0x05, 0x00, 0x09, 0xFF]));
+                }
+            }, 200);
+            setTimeout(() => {
+                if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
+                    // Send Buildbotics dump command
                     this.connection.write('D\n');
                 }
-            }, 300);
+            }, 400);
             setTimeout(() => {
                 if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
                     // Then GRBL build info
@@ -431,7 +441,9 @@ class Connection extends EventEmitter {
                 }
             }, 600);
         } else if (attempt <= 2) {
-            // Attempts 1-2: Try Buildbotics commands (report, help)
+            // Attempts 1-2: Try binary RTS + Buildbotics commands
+            // Binary RTS firmware version query
+            this.connection.writeImmediate(Buffer.from([0x01, 0x05, 0x00, 0x01, 0xFF]));
             this.connection.write('D\n');
             setTimeout(() => {
                 if (this.connection && this.connection.isOpen && !this.firmwareDetected) {
