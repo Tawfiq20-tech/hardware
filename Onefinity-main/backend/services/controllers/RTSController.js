@@ -1162,7 +1162,8 @@ class RTSController extends EventEmitter {
         logger.info('[RTS] Starting auto-home (all axes) — uses limit switches');
         this._homing = true;
         this._homingAxis = null;
-        this._writeAscii('$H\n');
+        // Buildbotics-derived firmware uses G28.2 for homing, NOT GRBL $H
+        this._sendGcode('G28.2 X0 Y0 Z0');
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
@@ -1195,7 +1196,8 @@ class RTSController extends EventEmitter {
         logger.info(`[RTS] Starting auto-home (${axisUpper} axis)`);
         this._homing = true;
         this._homingAxis = axisUpper;
-        this._writeAscii(`$H${axisUpper}\n`);
+        // Buildbotics-derived firmware uses G28.2 for homing, NOT GRBL $H/$HX
+        this._sendGcode(`G28.2 ${axisUpper}0`);
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
