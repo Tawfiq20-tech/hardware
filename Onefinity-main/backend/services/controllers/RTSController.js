@@ -25,6 +25,7 @@ const CMD_QUERY = 0x00;       // Query register: 01 05 00 XX FF
 const CMD_JOG = 0x20;         // Jog: 01 19 00 20 [4xF32] [4 zeros] FF
 const CMD_GCODE_MODE = 0x40;  // G-code mode: 01 09 00 40 3E [ASCII] FF
 const CMD_WRITE_REG = 0x82;   // Write register: 01 0B 00 82 XX YY VV VV VV VV FF
+const CMD_HOME = 0x0A;        // Home command: 01 06 00 0A 01 FF (from Wireshark capture)
 
 // Response type bytes (device -> host)
 const RESP_FIRMWARE = 0x01;   // Firmware version response
@@ -1149,9 +1150,10 @@ class RTSController extends EventEmitter {
         logger.info('[RTS] Starting auto-home (all axes) — uses limit switches');
         this._homing = true;
         this._homingAxis = null;
-        // Buildbotics-derived firmware uses G28.2 for homing, NOT GRBL $H
-        // Send as raw ASCII to avoid _sendGcode routing issues
-        this._writeAscii('G28.2 X0 Y0 Z0\n');
+        // Binary homing command from Wireshark capture: 01 06 00 0A 01 FF
+        // Send twice for reliability (as observed in RTS-X protocol)
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
@@ -1184,8 +1186,11 @@ class RTSController extends EventEmitter {
         logger.info(`[RTS] Starting auto-home (${axisUpper} axis)`);
         this._homing = true;
         this._homingAxis = axisUpper;
-        // Buildbotics-derived firmware uses G28.2 for homing, NOT GRBL $H/$HX
-        this._writeAscii(`G28.2 ${axisUpper}0\n`);
+        // Binary homing command: 01 06 00 0A <axis_byte> FF
+        // 0x01 = all axes (from capture), individual axes TBD
+        // For now, send home-all for any axis request
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
         this._activeState = 'Home';
         this._updateStateObject();
         this.emit('state', this.getState());
