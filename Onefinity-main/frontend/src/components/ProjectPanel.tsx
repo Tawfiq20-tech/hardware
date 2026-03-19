@@ -1,5 +1,7 @@
 import { useState, useEffect } from 'react';
 import { FolderOpen, Clock, FileText, Trash2, Play, Eye, MoreVertical } from 'lucide-react';
+import { useCNCStore } from '../stores/cncStore';
+import { backendJobLoad, backendJobStart } from '../utils/backendConnection';
 import './ProjectPanel.css';
 
 interface Project {
@@ -125,8 +127,27 @@ export default function ProjectPanel() {
     };
 
     const handleRunProject = (project: Project) => {
-        console.log('Running project:', project.name);
-        // TODO: Implement run logic
+        const { connected, machineState, rawGcodeContent } = useCNCStore.getState();
+        if (!connected || machineState !== 'idle') {
+            console.warn('Cannot run: machine not connected or not idle');
+            return;
+        }
+
+        // Update project status to running
+        setProjects(prev => prev.map(p =>
+            p.id === project.id ? { ...p, status: 'running' as const, lastRun: new Date().toISOString() } : p
+        ));
+
+        // If we have cached G-code content, load and start the job
+        // Otherwise the user needs to re-load the file first
+        if (rawGcodeContent) {
+            backendJobLoad(rawGcodeContent);
+            setTimeout(() => backendJobStart(), 200);
+        } else {
+            console.warn('No G-code content loaded — please load the file first');
+            useCNCStore.getState().addConsoleLog('warning', `Re-load ${project.fileName} to run it`);
+        }
+
         setActiveMenu(null);
     };
 

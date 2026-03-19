@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { useCNCStore } from '../stores/cncStore';
+import { backendZeroWCS, sendBackendCommand } from '../utils/backendConnection';
 import './DigitalReadout.css';
 
 interface DigitalReadoutProps {
@@ -31,7 +32,8 @@ const DigitalReadout: React.FC<DigitalReadoutProps> = ({ className = '' }) => {
         const value = parseFloat(editValue);
         if (!isNaN(value)) {
             updatePosition(axis, value);
-            // TODO: Send G10 command to set work coordinate
+            // G10 L20 P0 sets the active WCS offset so current position = entered value
+            sendBackendCommand(`G10 L20 P0 ${axis.toUpperCase()}${value}`);
         }
         setEditingAxis(null);
         setEditValue('');
@@ -139,24 +141,27 @@ const DigitalReadout: React.FC<DigitalReadoutProps> = ({ className = '' }) => {
             </div>
 
             <div className="dro-actions">
-                <button 
+                <button
                     className="zero-button zero-all"
                     disabled={!connected || machineState !== 'idle'}
                     title="Zero all axes"
+                    onClick={() => backendZeroWCS({ axes: ['x', 'y', 'z'] })}
                 >
                     Zero All
                 </button>
-                <button 
+                <button
                     className="zero-button zero-xy"
                     disabled={!connected || machineState !== 'idle'}
                     title="Zero X and Y axes"
+                    onClick={() => backendZeroWCS({ axes: ['x', 'y'] })}
                 >
                     Zero XY
                 </button>
-                <button 
+                <button
                     className="zero-button zero-z"
                     disabled={!connected || machineState !== 'idle'}
                     title="Zero Z axis"
+                    onClick={() => backendZeroWCS({ axes: ['z'] })}
                 >
                     Zero Z
                 </button>
