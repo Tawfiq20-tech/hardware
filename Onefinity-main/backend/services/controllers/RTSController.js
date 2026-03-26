@@ -27,6 +27,7 @@ const CMD_GCODE_MODE = 0x40;  // G-code mode: 01 09 00 40 3E [ASCII] FF
 const CMD_WRITE_REG = 0x82;   // Write register: 01 0B 00 82 XX YY VV VV VV VV FF
 const CMD_HOME = 0x0A;        // Home command: 01 06 00 0A 01 FF (from Wireshark capture)
 const CMD_JOG_MODE = 0x10;    // Jog mode enable/disable: 01 06 00 10 01/00 FF (from Wireshark capture)
+const CMD_SET_HOME = 0x0B;    // Set home position (zero axis): 01 06 00 0B XX FF (decoded from Y-homing capture March 26)
 
 // Response type bytes (device -> host)
 const RESP_FIRMWARE = 0x01;   // Firmware version response
@@ -34,7 +35,9 @@ const RESP_STATUS = 0xB0;     // 30-byte position/status report
 const RESP_JOG_ACK = 0xB3;   // Jog acknowledged
 const RESP_JSON = 0xA0;       // JSON config message
 const RESP_STATE = 0xC1;      // Machine state (00=idle, 01=moving)
-const RESP_MOTION = 0xA1;     // Motion complete
+const RESP_MOTION = 0xA1;     // Motion/homing phase complete (switch triggered)
+const RESP_HOMING_PROGRESS = 0xA4; // Homing in progress (sent every ~250ms during seek)
+const RESP_MODE_ACK = 0xBC;   // Mode change acknowledged
 
 // Register IDs for queries
 const REG_FIRMWARE = 0x01;
@@ -101,8 +104,14 @@ const FIRMWARE_DEFAULTS = {
 const JOG_DIRECTION = [1, 1, 1, 1]; // [X, Y, Z, A] — no negation needed, board handles direction
 
 // Homing seek direction per axis: -1 = negative, +1 = positive
-// X homes negative (confirmed by Tawfiq), Y and Z home positive
-const HOME_DIRECTION = [-1, 1, 1, 1]; // [X, Y, Z, A]
+// X homes negative (confirmed by Tawfiq), Y homes negative (decoded from capture March 26)
+// Z home direction TBD — defaulting to positive until captured
+const HOME_DIRECTION = [-1, -1, 1, 1]; // [X, Y, Z, A]
+
+// Homing speeds (from decoded Y-homing capture, March 26 2026)
+const HOME_FAST_SPEED = 811;    // mm/min — fast seek toward switch
+const HOME_BACKOFF_SPEED = 5;   // mm/min — slow reverse off switch
+const HOME_SLOW_SPEED = 15;     // mm/min — slow precise re-approach
 
 // ─── Controller ────────────────────────────────────────────────────────────
 
@@ -733,9 +742,15 @@ class RTSController extends EventEmitter {
                 this.emit('alarm', { code: stateByte, message: 'Machine is in alarm state. Clear with Unlock ($X).' });
             }
 
-            // Detect homing completion (transition from Home to Idle)
-            if (this._homing && prevState === 'Home' && this._activeState === 'Idle') {
-                this._onHomingComplete();
+            // Detect homing state transitions
+            if (this._homing && (prevState === 'Home' || prevState === 'Homing') && this._activeState === 'Idle') {
+                // If in fast_seek phase, switch has been triggered → start back-off
+                if (this._homingPhase === 'fast_seek') {
+                    this._startHomingBackoff();
+                } else if (!this._homingPhase || this._homingPhase === 'set_home') {
+                    // Final completion
+                    this._onHomingComplete();
+                }
             }
         }
 
@@ -1394,52 +1409,43 @@ class RTSController extends EventEmitter {
 
     /**
      * Start homing the next axis in the queue.
-     * Called initially and after each axis completes.
+     * Implements the full 7-phase homing protocol decoded from Y-homing USB capture (March 26, 2026):
+     *
+     *   Phase 1: Send test jogs (vAxis=-1, 4x) to verify axis can move
+     *   Phase 2: Send HOMING command 0x0A (twice)
+     *   Phase 3: SET_MODE 0x10 + fast seek toward switch (811 mm/min)
+     *   Phase 4: Wait for switch trigger (0xA1 response or state→Idle)
+     *   Phase 5: Back-off from switch (reverse at 5 mm/min)
+     *   Phase 6: SET_MODE 0x10 + slow re-approach (15 mm/min)
+     *   Phase 7: SET_HOME 0x0B to zero the position
      */
     _startNextAxisHome() {
         if (!this._homingQueue || this._homingQueue.length === 0) {
-            // All axes homed
             this._onHomingComplete();
             return;
         }
 
         const axis = this._homingQueue.shift();
         this._homingAxis = axis;
+        this._homingPhase = 'test_jog';
         const axisIdx = { X: 0, Y: 1, Z: 2, A: 3 }[axis];
+        const direction = HOME_DIRECTION[axisIdx];
 
-        logger.info(`[RTS] Homing ${axis} axis — sending homing command + seek move`);
+        logger.info(`[RTS] Homing ${axis} axis — 7-phase protocol (dir=${direction > 0 ? '+' : '-'})`);
         this.emit('console', `[RTS] Homing ${axis} axis...`);
 
-        // Step 1: Send homing command (twice for reliability, as in RTS-X capture)
-        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
-        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
+        // ── Phase 1: Test jogs (4x small moves to verify axis responds) ──
+        const sendTestJog = (count) => {
+            if (!this._homing || count <= 0) {
+                // Move to Phase 2 after test jogs
+                this._startHomingPhase2(axis, axisIdx, direction);
+                return;
+            }
+            this._sendAxisJog(axisIdx, direction * (-1), 0); // vAxis=-1 test
+            setTimeout(() => sendTestJog(count - 1), 500);
+        };
 
-        // Step 2: After 400ms, send the seek move toward the limit switch
-        // (matches RTS-X timing from Wireshark: homing cmd at t=0, move at t+0.425s)
-        setTimeout(() => {
-            if (!this._homing) return; // Cancelled
-
-            // Send CMD 0x10 val=0x00 (queue/line init, as seen in capture)
-            this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
-
-            // Build seek move: drive axis toward limit switch at 2000 mm/min
-            // Per-axis direction: X=negative, Y/Z=positive (from hardware testing)
-            const maxTravel = this._firmwareConfig.max_travel;
-            const seekDistance = HOME_DIRECTION[axisIdx] * (Math.abs(maxTravel[axisIdx]) + 10);
-
-            const payload = Buffer.alloc(22);
-            payload[0] = CMD_QUERY;
-            payload[1] = CMD_JOG;
-            // Set only the axis being homed, others = 0
-            payload.writeFloatLE(axisIdx === 0 ? seekDistance : 0, 2);  // X
-            payload.writeFloatLE(axisIdx === 1 ? seekDistance : 0, 6);  // Y
-            payload.writeFloatLE(axisIdx === 2 ? seekDistance : 0, 10); // Z
-            payload.writeFloatLE(axisIdx === 3 ? seekDistance : 0, 14); // A
-            payload.writeFloatLE(2000.0, 18); // Feed rate (from capture)
-            this._writeFrame(payload);
-
-            logger.info(`[RTS] Sent homing seek move: ${axis}=${seekDistance.toFixed(0)} feed=2000`);
-        }, 400);
+        sendTestJog(4);
 
         // Homing timeout per axis — 60s should be plenty
         if (this._homingTimer) clearTimeout(this._homingTimer);
@@ -1447,6 +1453,7 @@ class RTSController extends EventEmitter {
             if (this._homing) {
                 this._homing = false;
                 this._homingAxis = null;
+                this._homingPhase = null;
                 this._homingQueue = [];
                 logger.error(`[RTS] Homing timeout on ${axis} — check limit switches`);
                 this.emit('alarm', { code: 0x03, message: `Homing timeout on ${axis} — check limit switches are connected and working` });
@@ -1454,6 +1461,150 @@ class RTSController extends EventEmitter {
                 this.emit('homing:location', { location: axis, status: 'failed' });
             }
         }, 60000);
+    }
+
+    /**
+     * Phase 2: Send HOMING command + Phase 3: Fast seek
+     * Decoded from Y-homing capture: HOME 0x0A (twice) → wait 400ms → SET_MODE + fast jog
+     */
+    _startHomingPhase2(axis, axisIdx, direction) {
+        if (!this._homing) return;
+        this._homingPhase = 'homing_trigger';
+
+        logger.info(`[RTS] ${axis} Phase 2: Sending HOMING command (0x0A, twice)`);
+        this.emit('console', `[RTS] ${axis}: triggering homing...`);
+
+        // Send homing command twice (as seen in RTS-X capture)
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
+        this._writeFrame(Buffer.from([CMD_QUERY, CMD_HOME, 0x01]));
+
+        // Phase 3: After 400ms, send SET_MODE + fast seek move
+        setTimeout(() => {
+            if (!this._homing) return;
+            this._homingPhase = 'fast_seek';
+
+            logger.info(`[RTS] ${axis} Phase 3: Fast seek at ${HOME_FAST_SPEED} mm/min (dir=${direction})`);
+            this.emit('console', `[RTS] ${axis}: fast seeking toward switch...`);
+
+            // SET_MODE 0x10 = 0x00 (enter homing seek mode)
+            this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
+
+            // Fast seek jog toward limit switch
+            this._sendAxisJog(axisIdx, direction * HOME_FAST_SPEED, HOME_FAST_SPEED);
+
+            // Phase 4: Monitor for switch trigger — detected via state change or 0xA1 response
+            // The _handleStatusFrame already monitors for state=Idle transitions.
+            // We override _onHomingComplete to handle back-off instead of finishing.
+            this._homingAxisIdx = axisIdx;
+            this._homingDirection = direction;
+
+        }, 400);
+    }
+
+    /**
+     * Send a jog command for a single axis.
+     * @param {number} axisIdx - 0=X, 1=Y, 2=Z, 3=A
+     * @param {number} velocity - velocity in mm/min (negative = reverse)
+     * @param {number} feedrate - feed rate override (0 = use velocity magnitude)
+     */
+    _sendAxisJog(axisIdx, velocity, feedrate) {
+        const payload = Buffer.alloc(22);
+        payload[0] = CMD_QUERY;
+        payload[1] = CMD_JOG;
+        // Set only the target axis velocity, others = 0
+        const offset = 2 + (axisIdx * 4);
+        payload.writeFloatLE(velocity, offset);
+        // Feed rate in last 4 bytes
+        payload.writeFloatLE(feedrate || Math.abs(velocity), 18);
+        this._writeFrame(payload);
+    }
+
+    /**
+     * Phase 5-7: Back-off, slow re-approach, set home.
+     * Called when fast seek completes (state transitions from Homing to Idle,
+     * meaning the limit switch was triggered and the board stopped).
+     */
+    _startHomingBackoff() {
+        if (!this._homing) return;
+        const axis = this._homingAxis;
+        const axisIdx = this._homingAxisIdx;
+        const direction = this._homingDirection;
+
+        // ── Phase 5: Back off from switch ──
+        this._homingPhase = 'backoff';
+        logger.info(`[RTS] ${axis} Phase 5: Backing off switch at ${HOME_BACKOFF_SPEED} mm/min`);
+        this.emit('console', `[RTS] ${axis}: backing off switch...`);
+
+        // Small reverse move to pull off the switch
+        this._sendAxisJog(axisIdx, -direction * HOME_BACKOFF_SPEED, HOME_BACKOFF_SPEED);
+
+        // Wait for back-off to complete (~2 seconds), then slow re-approach
+        // The 0xA1 response indicates motion complete
+        this._awaitMotionComplete(() => {
+            if (!this._homing) return;
+
+            // ── Phase 6: Slow precise re-approach ──
+            this._homingPhase = 'slow_seek';
+            logger.info(`[RTS] ${axis} Phase 6: Slow re-approach at ${HOME_SLOW_SPEED} mm/min`);
+            this.emit('console', `[RTS] ${axis}: precise homing...`);
+
+            // SET_MODE again before slow approach (as in capture)
+            this._writeFrame(Buffer.from([CMD_QUERY, CMD_JOG_MODE, 0x00]));
+
+            // Slow jog toward switch
+            this._sendAxisJog(axisIdx, direction * HOME_SLOW_SPEED, HOME_SLOW_SPEED);
+
+            // Wait for switch trigger again
+            this._awaitMotionComplete(() => {
+                if (!this._homing) return;
+
+                // ── Phase 7: Set home position ──
+                this._homingPhase = 'set_home';
+                logger.info(`[RTS] ${axis} Phase 7: Setting home position (0x0B)`);
+                this.emit('console', `[RTS] ${axis}: zeroing position...`);
+
+                // Send SET_HOME command (0x0B) — zeros the axis position
+                this._writeFrame(Buffer.from([CMD_QUERY, CMD_SET_HOME, axisIdx]));
+
+                // Short delay then mark this axis as complete
+                setTimeout(() => {
+                    this._homingPhase = null;
+                    this._onHomingComplete();
+                }, 200);
+            });
+        });
+    }
+
+    /**
+     * Wait for motion to complete on the current homing axis.
+     * Detects either 0xA1 response or state transition to Idle.
+     * Times out after 15 seconds.
+     */
+    _awaitMotionComplete(callback) {
+        const startTime = Date.now();
+        const checkInterval = setInterval(() => {
+            // Timeout after 15 seconds
+            if (Date.now() - startTime > 15000) {
+                clearInterval(checkInterval);
+                logger.warn(`[RTS] Motion complete timeout during ${this._homingPhase}`);
+                callback();
+                return;
+            }
+
+            // Check if state went back to Idle/Ready (motion stopped)
+            if (this._activeState === 'Idle' || this._activeState === 'Run') {
+                clearInterval(checkInterval);
+                // Small settling delay
+                setTimeout(callback, 300);
+                return;
+            }
+
+            // Also cancelled
+            if (!this._homing) {
+                clearInterval(checkInterval);
+                return;
+            }
+        }, 100);
     }
 
     /**
