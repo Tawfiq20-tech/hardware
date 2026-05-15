@@ -17,12 +17,19 @@ export interface ConsoleLine {
 }
 
 // G-Code Types
+export type ArcPlane = 'XY' | 'ZX' | 'YZ';
+
 export interface GCodeLine {
     command: string;
     x?: number;
     y?: number;
     z?: number;
+    i?: number;
+    j?: number;
+    k?: number;
+    r?: number;
     f?: number;
+    s?: number;
     comment?: string;
 }
 

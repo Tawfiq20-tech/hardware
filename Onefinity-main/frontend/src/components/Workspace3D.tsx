@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import {
     Image, Grid3x3, Lock, Target, ZoomIn, ZoomOut, Upload,
-    RotateCcw, Eye
+    RotateCcw, Eye, Cone
 } from 'lucide-react';
 import type { ViewPreset } from '../types/cnc';
 import { useCNCStore } from '../stores/cncStore';
@@ -21,15 +21,22 @@ export default function Workspace3D() {
     const toolpathRef = useRef<THREE.LineSegments | null>(null);
     const axisOverlayRef = useRef<THREE.Group | null>(null);
     const guideLinesRef = useRef<THREE.LineSegments | null>(null);
+    const spindleRef = useRef<THREE.Group | null>(null);
+    const trailRef = useRef<THREE.LineSegments | null>(null);
+    // Total cut-segment count for the currently loaded toolpath — used so the
+    // progress trail useEffect doesn't need to re-count segments every frame.
+    const trailVertexCountRef = useRef<number>(0);
 
     const [showGrid, setShowGrid] = useState(true);
     const [isLocked, setIsLocked] = useState(false);
     const [showLabels, setShowLabels] = useState(true);
     const [showViewPresets, setShowViewPresets] = useState(false);
+    const [showSpindle, setShowSpindle] = useState(true);
 
-    const { 
+    const {
         viewPreset, setViewPreset,
-        gcode, toolpathSegments, fileInfo, currentLine 
+        gcode, toolpathSegments, fileInfo, currentLine,
+        position: workPosition,
     } = useCNCStore();
 
 
@@ -129,25 +136,30 @@ export default function Workspace3D() {
         controls.maxDistance = 2000;
         controlsRef.current = controls;
 
-        // Lighting – strong enough for solid shaded geometry
-        const ambientLight = new THREE.AmbientLight(0x4477aa, 0.5);
+        // Lighting – 3-point rig tuned for tube geometry with depth shading
+        const ambientLight = new THREE.AmbientLight(0x3a5a7a, 0.35);
         scene.add(ambientLight);
 
-        const keyLight = new THREE.DirectionalLight(0xffffff, 0.8);
-        keyLight.position.set(150, 200, 100);
+        const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
+        keyLight.position.set(150, 250, 100);
         keyLight.castShadow = true;
+        keyLight.shadow.mapSize.width = 2048;
+        keyLight.shadow.mapSize.height = 2048;
         keyLight.shadow.camera.left = -300;
         keyLight.shadow.camera.right = 300;
         keyLight.shadow.camera.top = 300;
         keyLight.shadow.camera.bottom = -300;
+        keyLight.shadow.camera.near = 1;
+        keyLight.shadow.camera.far = 600;
+        keyLight.shadow.bias = -0.0005;
         scene.add(keyLight);
 
-        const fillLight = new THREE.DirectionalLight(0x6699cc, 0.35);
-        fillLight.position.set(-100, 80, -80);
+        const fillLight = new THREE.DirectionalLight(0x6699cc, 0.45);
+        fillLight.position.set(-120, 100, -80);
         scene.add(fillLight);
 
-        const rimLight = new THREE.DirectionalLight(0x88bbff, 0.25);
-        rimLight.position.set(0, 50, -150);
+        const rimLight = new THREE.DirectionalLight(0x88bbff, 0.3);
+        rimLight.position.set(0, 60, -180);
         scene.add(rimLight);
 
         // Create bed surface – subtle dark plane below the toolpath
@@ -321,6 +333,55 @@ export default function Workspace3D() {
         scene.add(new THREE.Line(oX, originMat));
         scene.add(new THREE.Line(oZ, originMat));
 
+        // ── Spindle mesh ─────────────────────────────────────────────
+        // Local frame: tip at (0,0,0), body extends in +Y.
+        // World position is updated each render to (workX, workZ, -workY)
+        // so the bit tip sits exactly on the current commanded coordinate.
+        const spindleGroup = new THREE.Group();
+        spindleGroup.name = 'spindle';
+
+        const bitMat = new THREE.MeshStandardMaterial({ color: 0xc0c0c8, roughness: 0.25, metalness: 0.85 });
+        const colletMat = new THREE.MeshStandardMaterial({ color: 0x303035, roughness: 0.4, metalness: 0.6 });
+        const bodyMat = new THREE.MeshStandardMaterial({ color: 0x1f2630, roughness: 0.55, metalness: 0.4 });
+        const accentMat = new THREE.MeshStandardMaterial({
+            color: 0xff5533, roughness: 0.3, metalness: 0.2,
+            emissive: 0x331100, emissiveIntensity: 0.4,
+        });
+
+        // Bit: 3 mm radius, 25 mm long — slim tool-bit
+        const bit = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 25, 16), bitMat);
+        bit.position.y = 12.5; bit.castShadow = true;
+        spindleGroup.add(bit);
+
+        // Collet: tapered cone 4 → 8 mm, 18 mm long, sits above bit
+        const collet = new THREE.Mesh(new THREE.CylinderGeometry(4, 8, 18, 18), colletMat);
+        collet.position.y = 25 + 9; collet.castShadow = true;
+        spindleGroup.add(collet);
+
+        // Body: 18 mm radius, 70 mm tall — main spindle motor housing
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(18, 18, 70, 24), bodyMat);
+        body.position.y = 25 + 18 + 35; body.castShadow = true;
+        spindleGroup.add(body);
+
+        // Top accent ring (red band) so the spindle has a visible orientation cue
+        const ring = new THREE.Mesh(new THREE.TorusGeometry(18.5, 1.5, 8, 32), accentMat);
+        ring.position.y = 25 + 18 + 65; ring.rotation.x = Math.PI / 2;
+        spindleGroup.add(ring);
+
+        // Soft halo at the tip — a subtle emissive disk that hugs the workpiece
+        const halo = new THREE.Mesh(
+            new THREE.CircleGeometry(4, 24),
+            new THREE.MeshBasicMaterial({ color: 0xff7755, transparent: true, opacity: 0.35 }),
+        );
+        halo.rotation.x = -Math.PI / 2;
+        halo.position.y = 0.05;
+        spindleGroup.add(halo);
+
+        spindleGroup.position.set(0, 0, 0);
+        spindleGroup.visible = showSpindle;
+        spindleRef.current = spindleGroup;
+        scene.add(spindleGroup);
+
         // Animation loop
         const animate = () => {
             requestAnimationFrame(animate);
@@ -369,6 +430,74 @@ export default function Workspace3D() {
             }
         }
     }, [showGrid]);
+
+    // Spindle visibility toggle
+    useEffect(() => {
+        if (spindleRef.current) spindleRef.current.visible = showSpindle;
+    }, [showSpindle]);
+
+    // Spindle live position — bit tip tracks the work-coord X/Y/Z. The Y-up
+    // scene maps (workX, workZ, -workY), matching the toolpath transformation
+    // used everywhere else.
+    useEffect(() => {
+        if (!spindleRef.current) return;
+        const targetX = workPosition.x;
+        const targetY = workPosition.z;      // scene Y = work Z (height)
+        const targetZ = -workPosition.y;     // scene Z = inverted work Y
+        spindleRef.current.position.set(targetX, targetY, targetZ);
+    }, [workPosition.x, workPosition.y, workPosition.z]);
+
+    // ── Progress trail ──
+    // Build a static LineSegments mesh with ALL cut-path vertices in
+    // chronological order. As `currentLine` advances, grow drawRange so only
+    // the completed portion renders. This is O(1) per frame regardless of
+    // segment count — the geometry is built once when toolpath changes.
+    useEffect(() => {
+        if (!sceneRef.current) return;
+        // Tear down any previous trail
+        if (trailRef.current) {
+            sceneRef.current.remove(trailRef.current);
+            trailRef.current.geometry.dispose();
+            (trailRef.current.material as THREE.Material).dispose();
+            trailRef.current = null;
+        }
+        const cuts = toolpathSegments.filter(s => !s.rapid);
+        if (cuts.length === 0) {
+            trailVertexCountRef.current = 0;
+            return;
+        }
+        const pts: number[] = [];
+        for (const seg of cuts) {
+            pts.push(seg.start.x, seg.start.z, -seg.start.y);
+            pts.push(seg.end.x, seg.end.z, -seg.end.y);
+        }
+        const geom = new THREE.BufferGeometry();
+        geom.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+        geom.setDrawRange(0, 0); // start invisible
+        const mat = new THREE.LineBasicMaterial({
+            color: 0x6fffd0,
+            transparent: true,
+            opacity: 0.95,
+            linewidth: 2,    // honoured on most desktop GPUs even though spec says it's always 1
+        });
+        const line = new THREE.LineSegments(geom, mat);
+        line.renderOrder = 2; // draw on top of stock slab
+        sceneRef.current.add(line);
+        trailRef.current = line;
+        trailVertexCountRef.current = cuts.length * 2;
+    }, [toolpathSegments]);
+
+    // Advance trail draw range as currentLine moves through gcode.
+    useEffect(() => {
+        const trail = trailRef.current;
+        if (!trail) return;
+        const totalLines = Math.max(gcode.length, 1);
+        const fraction = Math.max(0, Math.min(1, currentLine / totalLines));
+        const totalVerts = trailVertexCountRef.current;
+        // Round to nearest pair so we never render half a segment
+        const verts = Math.floor((totalVerts * fraction) / 2) * 2;
+        trail.geometry.setDrawRange(0, verts);
+    }, [currentLine, gcode.length]);
 
     // Update G-code visualization
     useEffect(() => {
@@ -422,62 +551,143 @@ export default function Workspace3D() {
 
             const spanX = bMaxX - bMinX;
             const spanY = bMaxY - bMinY;
+            const spanZ = bMaxZ - bMinZ;
             const maxSpan = Math.max(spanX, spanY, 1);
 
-            // ── Tube radius – thinner for cleaner appearance ──
-            const tubeRadius = maxSpan * 0.002;
+            // ── Adaptive tube radius ──
+            // 0.8% of max span gives visual punch on the dark scene; floor at
+            // 0.6 mm so tiny pen-plot designs are still visible, ceiling at
+            // 2.0 mm so a 600 mm part doesn't render as a fat sausage.
+            const tubeRadius = Math.min(2.0, Math.max(0.6, maxSpan * 0.008));
 
-            // Solid shaded material for the cut toolpath (like the reference)
-            const tubeMat = new THREE.MeshStandardMaterial({
-                color: 0x3399cc,
-                roughness: 0.35,
-                metalness: 0.15,
-                side: THREE.DoubleSide,
-            });
+            // ── Z-depth colour gradient ──
+            // Deeper cuts (more negative Z) render darker; lift moves render
+            // brighter cyan. Range hugs the actual Z bounds of the cut.
+            // If the file is 2D (spanZ ≈ 0), everything renders the mid colour.
+            const colourForZ = (z: number): THREE.Color => {
+                if (spanZ < 0.01) return new THREE.Color(0x66e0ff);
+                const t = Math.max(0, Math.min(1, (z - bMinZ) / spanZ));
+                // mid teal at bottom → bright cyan at top (both lifted off the
+                // background so the gradient stays readable on dark UI)
+                const deep = new THREE.Color(0x1f6a8c);
+                const shallow = new THREE.Color(0x8dedff);
+                return deep.clone().lerp(shallow, t);
+            };
 
-            // Build tube segments – group consecutive moves into polylines for smooth tubes
+            // Cache materials by quantised Z so we don't allocate per-segment.
+            // 16 buckets across the Z range is plenty visually.
+            const Z_BUCKETS = 16;
+            const matCache = new Map<number, THREE.MeshStandardMaterial>();
+            const matForZ = (z: number): THREE.MeshStandardMaterial => {
+                const t = spanZ < 0.01 ? 0 : Math.max(0, Math.min(1, (z - bMinZ) / spanZ));
+                const bucket = Math.round(t * (Z_BUCKETS - 1));
+                let mat = matCache.get(bucket);
+                if (!mat) {
+                    const repZ = bMinZ + (bucket / (Z_BUCKETS - 1)) * spanZ;
+                    mat = new THREE.MeshStandardMaterial({
+                        color: colourForZ(repZ),
+                        roughness: 0.4,
+                        metalness: 0.15,
+                        side: THREE.DoubleSide,
+                        emissive: colourForZ(repZ).clone().multiplyScalar(0.25),
+                        emissiveIntensity: 0.6,
+                    });
+                    matCache.set(bucket, mat);
+                }
+                return mat;
+            };
+
+            // ── Stock material slab ──
+            // A semi-transparent block under the design that suggests "this is
+            // the wood we're cutting from". Only render when the file has Z
+            // depth (don't draw a slab for 2D pen plots).
+            const STOCK_MARGIN = Math.max(2, maxSpan * 0.04);
+            if (spanZ > 0.5) {
+                const stockGeom = new THREE.BoxGeometry(
+                    spanX + STOCK_MARGIN * 2,
+                    spanZ + 1,
+                    spanY + STOCK_MARGIN * 2,
+                );
+                const stockMat = new THREE.MeshStandardMaterial({
+                    color: 0x4a3220,           // walnut-ish brown
+                    roughness: 0.85,
+                    metalness: 0.0,
+                    transparent: true,
+                    opacity: 0.18,
+                    depthWrite: false,         // don't occlude the tubes inside it
+                });
+                const stock = new THREE.Mesh(stockGeom, stockMat);
+                stock.position.set(
+                    (bMinX + bMaxX) / 2,
+                    (bMinZ + bMaxZ) / 2 - 0.5,    // sit slightly below toolpath
+                    -((bMinY + bMaxY) / 2),
+                );
+                stock.receiveShadow = true;
+                toolpathGroup.add(stock);
+            }
+
+            // Build tube segments – group consecutive moves into polylines for smooth tubes.
+            // Each chain is split on Z-bucket changes so the depth gradient is honoured.
             const buildTubes = () => {
-                const chains: THREE.Vector3[][] = [];
+                interface Chain { pts: THREE.Vector3[]; bucket: number; }
+                const chains: Chain[] = [];
                 let currentChain: THREE.Vector3[] = [];
+                let currentBucket = -1;
 
-                // Tolerance for continuity: if segments are closer than 0.1% of design span, they're continuous
+                const zBucket = (z: number): number => {
+                    const t = spanZ < 0.01 ? 0 : Math.max(0, Math.min(1, (z - bMinZ) / spanZ));
+                    return Math.round(t * (Z_BUCKETS - 1));
+                };
+
                 const continuityTol = maxSpan * 0.001;
+
+                const flush = () => {
+                    if (currentChain.length >= 2) chains.push({ pts: currentChain, bucket: currentBucket });
+                    currentChain = [];
+                    currentBucket = -1;
+                };
 
                 cutSegments.forEach((seg) => {
                     const startPt = new THREE.Vector3(seg.start.x, seg.start.z, -seg.start.y);
                     const endPt = new THREE.Vector3(seg.end.x, seg.end.z, -seg.end.y);
+                    const segBucket = zBucket((seg.start.z + seg.end.z) / 2);
 
                     if (currentChain.length === 0) {
                         currentChain.push(startPt, endPt);
+                        currentBucket = segBucket;
                     } else {
                         const lastPt = currentChain[currentChain.length - 1];
-                        if (lastPt.distanceTo(startPt) < continuityTol) {
-                            // Continuous – extend the chain
+                        const continuous = lastPt.distanceTo(startPt) < continuityTol;
+                        const sameBucket = segBucket === currentBucket;
+                        if (continuous && sameBucket) {
                             currentChain.push(endPt);
                         } else {
-                            // Discontinuity – save current chain, start new
-                            if (currentChain.length >= 2) chains.push(currentChain);
-                            currentChain = [startPt, endPt];
+                            flush();
+                            currentChain.push(startPt, endPt);
+                            currentBucket = segBucket;
                         }
                     }
                 });
-                if (currentChain.length >= 2) chains.push(currentChain);
+                flush();
 
-                chains.forEach(pts => {
+                chains.forEach(({ pts, bucket }) => {
                     if (pts.length < 2) return;
+                    const repZ = bMinZ + (bucket / (Z_BUCKETS - 1)) * spanZ;
+                    const mat = matForZ(repZ);
 
                     // For chains with only 2 points, use a cylinder
                     if (pts.length === 2) {
                         const dir = new THREE.Vector3().subVectors(pts[1], pts[0]);
                         const len = dir.length();
                         if (len < 0.001) return;
-                        const cyl = new THREE.CylinderGeometry(tubeRadius, tubeRadius, len, 6, 1);
-                        const mesh = new THREE.Mesh(cyl, tubeMat);
+                        const cyl = new THREE.CylinderGeometry(tubeRadius, tubeRadius, len, 8, 1);
+                        const mesh = new THREE.Mesh(cyl, mat);
                         mesh.position.copy(pts[0]).add(dir.clone().multiplyScalar(0.5));
                         mesh.quaternion.setFromUnitVectors(
                             new THREE.Vector3(0, 1, 0),
                             dir.clone().normalize()
                         );
+                        mesh.castShadow = true;
                         toolpathGroup.add(mesh);
                         return;
                     }
@@ -486,21 +696,23 @@ export default function Workspace3D() {
                     try {
                         const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal', 0.1);
                         const tubeSegs = Math.max(pts.length * 3, 12);
-                        const tubeGeom = new THREE.TubeGeometry(curve, tubeSegs, tubeRadius, 6, false);
-                        toolpathGroup.add(new THREE.Mesh(tubeGeom, tubeMat));
+                        const tubeGeom = new THREE.TubeGeometry(curve, tubeSegs, tubeRadius, 8, false);
+                        const mesh = new THREE.Mesh(tubeGeom, mat);
+                        mesh.castShadow = true;
+                        toolpathGroup.add(mesh);
                     } catch {
-                        // Fallback: individual cylinders
                         for (let j = 0; j < pts.length - 1; j++) {
                             const dir = new THREE.Vector3().subVectors(pts[j + 1], pts[j]);
                             const len = dir.length();
                             if (len < 0.001) continue;
-                            const cyl = new THREE.CylinderGeometry(tubeRadius, tubeRadius, len, 6, 1);
-                            const mesh = new THREE.Mesh(cyl, tubeMat);
+                            const cyl = new THREE.CylinderGeometry(tubeRadius, tubeRadius, len, 8, 1);
+                            const mesh = new THREE.Mesh(cyl, mat);
                             mesh.position.copy(pts[j]).add(dir.clone().multiplyScalar(0.5));
                             mesh.quaternion.setFromUnitVectors(
                                 new THREE.Vector3(0, 1, 0),
                                 dir.clone().normalize()
                             );
+                            mesh.castShadow = true;
                             toolpathGroup.add(mesh);
                         }
                     }
@@ -627,12 +839,19 @@ export default function Workspace3D() {
                     >
                         <Grid3x3 size={16} />
                     </button>
-                    <button 
+                    <button
                         className={`control-btn ${isLocked ? 'active' : ''}`}
                         onClick={() => setIsLocked(!isLocked)}
                         title="Lock Camera"
                     >
                         <Lock size={16} />
+                    </button>
+                    <button
+                        className={`control-btn ${showSpindle ? 'active' : ''}`}
+                        onClick={() => setShowSpindle(!showSpindle)}
+                        title="Toggle Spindle"
+                    >
+                        <Cone size={16} />
                     </button>
                     <button 
                         className="control-btn"
